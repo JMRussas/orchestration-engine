@@ -1,0 +1,78 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 5200,
+    "reload": false,
+    "cors_origins": [
+      "http://localhost:5173",
+      "http://localhost:5200",
+      "http://127.0.0.1:5173",
+      "http://127.0.0.1:5200"
+    ],
+    "rate_limit": "60/minute"
+  },
+  "anthropic": {
+    "planning_model": "claude-sonnet-4-6",
+    "models": {
+      "haiku": "claude-haiku-4-5-20251001",
+      "sonnet": "claude-sonnet-4-6",
+      "opus": "claude-opus-4-6"
+    },
+    "max_concurrent": 3,
+    "timeout": 120
+  },
+  "ollama": {
+    "hosts": {
+      "local": "http://localhost:11434",
+      "server": "http://192.168.1.164:11434"
+    },
+    "default_model": "qwen2.5-coder:14b",
+    "embed_model": "nomic-embed-text",
+    "embed_timeout": 30.0,
+    "generate_timeout": 120.0
+  },
+  "comfyui": {
+    "hosts": {
+      "local": "http://localhost:8188",
+      "server": "http://192.168.1.164:8188"
+    },
+    "poll_interval": 2.0,
+    "timeout": 300,
+    "default_checkpoint": "sd_xl_base_1.0.safetensors"
+  },
+  "rag": {
+    "databases": {
+      "noz": "../noz-rag/data/noz_rag.db",
+      "verse": "../verse-rag/data/verse_rag.db"
+    },
+    "embed_dimensions": 768,
+    "default_top_k": 8,
+    "max_top_k": 20
+  },
+  "budget": {
+    "daily_limit_usd": 5.00,
+    "monthly_limit_usd": 50.00,
+    "per_project_limit_usd": 10.00,
+    "warn_at_pct": 80
+  },
+  "execution": {
+    "max_concurrent_tasks": 3,
+    "tick_interval_sec": 2.0,
+    "max_tool_rounds": 10,
+    "default_max_tokens": 4096
+  },
+  "model_pricing": {
+    "claude-haiku-4-5-20251001": { "input_per_mtok": 1.0, "output_per_mtok": 5.0 },
+    "claude-sonnet-4-6": { "input_per_mtok": 3.0, "output_per_mtok": 15.0 },
+    "claude-opus-4-6": { "input_per_mtok": 15.0, "output_per_mtok": 75.0 }
+  },
+  "resource_check_interval_sec": 30,
+  "auth": {
+    "secret_key": "CHANGE-ME-generate-a-random-64-char-string-here",
+    "algorithm": "HS256",
+    "access_token_expire_minutes": 30,
+    "refresh_token_expire_days": 7,
+    "sse_token_expire_seconds": 60,
+    "allow_registration": true
+  }
+}

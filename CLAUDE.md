@@ -1,0 +1,99 @@
+# Orchestration Engine
+
+AI-powered task orchestration: takes requirements, generates plans via Claude, decomposes into prioritized tasks, and executes them in parallel with budget controls.
+
+## Quick Start
+
+```bash
+# Backend
+pip install -r requirements.txt
+cp config.example.json config.json   # Edit with your settings
+python run.py                        # http://localhost:5200
+
+# Frontend (dev)
+cd frontend && npm install && npm run dev   # http://localhost:5173
+
+# Frontend (production) — served by FastAPI
+cd frontend && npm run build                # builds to frontend/dist/
+
+# Tests
+pip install -r requirements-dev.txt
+python -m pytest tests/                     # run all tests
+python -m pytest tests/ --cov=backend       # with coverage report
+```
+
+## Project Structure
+
+| Path | Role |
+|------|------|
+| `run.py` | Uvicorn launcher |
+| `config.json` | All settings (gitignored) |
+| `config.example.json` | Config template with all options |
+| `backend/app.py` | FastAPI app, lifespan, CORS, rate limiting, routers |
+| `backend/config.py` | Config loader, constants, `validate_config()` startup checks |
+| `backend/container.py` | dependency-injector `DeclarativeContainer` |
+| `backend/logging_config.py` | Structured logging setup |
+| `backend/db/connection.py` | Async SQLite (aiosqlite, WAL mode) |
+| `backend/db/migrate.py` | Programmatic Alembic migration runner |
+| `backend/db/models_metadata.py` | SQLAlchemy Table definitions for Alembic |
+| `backend/migrations/` | Alembic migration versions |
+| `backend/middleware/auth.py` | JWT auth dependencies (Bearer, admin, SSE token) |
+| `backend/models/` | Pydantic schemas, status enums |
+| `backend/routes/auth.py` | Register, login, refresh, me endpoints |
+| `backend/routes/` | REST endpoints (projects, tasks, usage, services, events) |
+| `backend/services/auth.py` | Password hashing, JWT encode/decode, SSE tokens, user management |
+| `backend/services/planner.py` | Claude-powered plan generation |
+| `backend/services/decomposer.py` | Plan → task rows + dependency DAG |
+| `backend/services/executor.py` | Async worker pool, tool loop |
+| `backend/services/budget.py` | Spending tracking, limit enforcement |
+| `backend/services/model_router.py` | Model tier selection, cost calculation |
+| `backend/services/resource_monitor.py` | Health checks (Ollama, ComfyUI, Claude) |
+| `backend/services/progress.py` | SSE broadcast, event persistence |
+| `backend/tools/registry.py` | Injectable `ToolRegistry` class |
+| `backend/tools/` | Tool implementations (RAG, Ollama, ComfyUI, file) |
+| `frontend/` | React 19 + TypeScript + Vite UI |
+| `tests/` | pytest suite (unit, integration, E2E) |
+| `data/orchestration.db` | SQLite database (auto-created) |
+
+## Deep-Dive Docs
+
+| Topic | Location |
+|-------|----------|
+| Architecture | [.claude/architecture.md](.claude/architecture.md) |
+
+## Key Conventions
+
+- **Config**: all values in `config.json`, never hardcoded. `validate_config()` runs at startup.
+- **DI Container**: `backend/container.py` wires all singletons; routes use `@inject` + `Depends(Provide[...])`
+- **Database**: async SQLite via aiosqlite, WAL mode, all access via `Database` class
+- **Migrations**: Alembic manages schema; `Database.init(run_migrations=True)` in production, inline schema in tests
+- **Auth**: JWT Bearer tokens for REST, short-lived SSE tokens for EventSource. First registered user becomes admin.
+- **Ownership**: projects have `owner_id`. Users see/modify only their own projects. Admins can access all.
+- **Budget**: every API call recorded in `usage_log`, checked against limits before execution. Budget endpoints are admin-only.
+- **Models**: Ollama (free) for simple tasks, Haiku ($) for medium, Sonnet ($$) for complex
+- **Tools**: registered in `ToolRegistry` class, injected via DI container
+- **SSE**: short-lived token via `POST /api/events/{project_id}/token`, then stream via `GET /api/events/{project_id}?token=...`
+- **Rate limiting**: slowapi, default 60/minute, 5/minute on plan generation
+- **Tests**: pytest-asyncio (auto mode), 160 tests, 60%+ coverage target
+
+## Dependencies
+
+```
+# Runtime
+fastapi, uvicorn, httpx, anthropic, pydantic
+aiosqlite, alembic, sqlalchemy
+dependency-injector
+PyJWT, bcrypt, email-validator
+slowapi
+
+# Dev
+pytest, pytest-asyncio, pytest-cov
+```
+
+## Environment
+
+- Python 3.11+, Node.js 18+
+- ANTHROPIC_API_KEY env var required
+- Ollama at localhost:11434 and 192.168.1.164:11434
+- ComfyUI at localhost:8188 and 192.168.1.164:8188
+- RAG DBs at noz-rag/data/ and verse-rag/data/

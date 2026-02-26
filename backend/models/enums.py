@@ -1,0 +1,57 @@
+#  Orchestration Engine - Enums
+#
+#  Status and type enumerations used across the system.
+#
+#  Depends on: (none)
+#  Used by:    models/schemas.py, services/*, routes/*
+
+from enum import Enum
+
+
+class ProjectStatus(str, Enum):
+    DRAFT = "draft"
+    PLANNING = "planning"
+    READY = "ready"          # Plan approved, awaiting execution
+    EXECUTING = "executing"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class PlanStatus(str, Enum):
+    DRAFT = "draft"
+    APPROVED = "approved"
+    SUPERSEDED = "superseded"
+
+
+class TaskStatus(str, Enum):
+    PENDING = "pending"
+    BLOCKED = "blocked"      # Dependencies not met
+    QUEUED = "queued"        # Ready, waiting for worker
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class ModelTier(str, Enum):
+    HAIKU = "haiku"
+    SONNET = "sonnet"
+    OPUS = "opus"
+    OLLAMA = "ollama"
+
+
+class TaskType(str, Enum):
+    CODE = "code"
+    RESEARCH = "research"
+    ANALYSIS = "analysis"
+    ASSET = "asset"
+    INTEGRATION = "integration"
+    DOCUMENTATION = "documentation"
+
+
+class ResourceStatus(str, Enum):
+    ONLINE = "online"
+    OFFLINE = "offline"
+    DEGRADED = "degraded"    # Reachable but missing models

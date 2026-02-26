@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status -u)",
+      "Bash(git -C \"c:/Users/jruss/Git/Orchestration\" rev-parse --git-dir)",
+      "Bash(git -C \"C:/Users/jruss/Git/Orchestration\" init)",
+      "Bash(git -C \"C:/Users/jruss/Git/Orchestration\" status)",
+      "Bash(git add -n .)",
+      "Bash(git add .claude/ .gitignore CLAUDE.md backend/ config.example.json frontend/ pyproject.toml requirements-dev.txt requirements.txt run.py tests/)"
+    ]
+  }
+}

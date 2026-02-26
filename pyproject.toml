@@ -1,0 +1,19 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "unit: Fast, no I/O, no database",
+    "integration: Requires database",
+    "e2e: Full workflow (plan -> decompose -> execute)",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["backend"]
+omit = ["backend/tools/comfyui.py"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 60
