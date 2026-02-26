@@ -20,6 +20,8 @@ import uuid
 import anthropic
 import httpx
 
+from backend.logging_config import set_task_id
+
 logger = logging.getLogger("orchestration.executor")
 
 from backend.config import (
@@ -505,6 +507,7 @@ class Executor:
     async def _execute_task(self, task_row, est_cost: float = 0.0):
         """Execute a single task with semaphore-controlled concurrency."""
         task_id = task_row["id"]
+        set_task_id(task_id)
         try:
             async with self._semaphore:
                 project_id = task_row["project_id"]
@@ -606,6 +609,7 @@ class Executor:
                         task_id=task_id,
                     )
         finally:
+            set_task_id(None)
             self._dispatched.discard(task_id)
             if est_cost > 0:
                 await self._budget.release_reservation(est_cost)

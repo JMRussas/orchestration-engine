@@ -13,13 +13,16 @@ from backend.logging_config import setup_logging
 
 
 def main():
-    setup_logging()
-
     try:
         from backend.config import cfg
     except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
+
+    setup_logging(
+        level=cfg("server.log_level", "INFO"),
+        fmt=cfg("server.log_format", "json"),
+    )
 
     uvicorn.run(
         "backend.app:app",

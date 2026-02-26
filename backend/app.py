@@ -7,10 +7,14 @@
 #  Used by:    run.py
 
 import logging
+import uuid
 from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from backend.logging_config import set_request_id
 
 logger = logging.getLogger("orchestration.app")
 from fastapi.middleware.cors import CORSMiddleware
@@ -87,6 +91,20 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
         status_code=429,
         content={"detail": "Rate limit exceeded. Try again later."},
     )
+
+# Request ID tracing
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        rid = uuid.uuid4().hex[:12]
+        set_request_id(rid)
+        try:
+            response = await call_next(request)
+            response.headers["X-Request-ID"] = rid
+            return response
+        finally:
+            set_request_id(None)
+
+app.add_middleware(RequestIDMiddleware)
 
 # CORS
 app.add_middleware(
