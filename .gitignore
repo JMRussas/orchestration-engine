@@ -18,3 +18,5 @@ frontend/dist/
 .idea/
 .vscode/
 *.log
+.claude/settings.local.json
+*.tsbuildinfo
