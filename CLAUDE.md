@@ -93,7 +93,7 @@ docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 - **Verification**: optional post-completion check via Haiku (PASSED/GAPS_FOUND/HUMAN_NEEDED outcomes)
 - **Checkpoints**: retry-exhausted tasks create structured checkpoints for human resolution
 - **Traceability**: requirements numbered [R1], [R2], mapped to tasks; coverage endpoint shows gaps
-- **Tests**: Backend: pytest-asyncio (auto mode), 266+ tests, 60%+ coverage. Frontend: vitest + @testing-library/react, 25+ tests
+- **Tests**: Backend: pytest-asyncio (auto mode), 390+ tests, 85% coverage (CI threshold 80%). Frontend: vitest + @testing-library/react, 118 tests
 
 ## Dependencies
 

@@ -73,12 +73,12 @@ docker run -p 5200:5200 \
 ### Tests
 
 ```bash
-# Backend (236 tests, 60%+ coverage)
+# Backend (390+ tests, 85% coverage)
 pip install -r requirements-dev.txt
 python -m pytest tests/                     # all tests
 python -m pytest tests/ --cov=backend       # with coverage
 
-# Frontend (25 tests)
+# Frontend (118 tests)
 cd frontend && npm test
 ```
 

@@ -15,6 +15,7 @@ from backend.logging_config import (
     request_id_var,
     set_request_id,
     set_task_id,
+    setup_logging,
     task_id_var,
 )
 
@@ -92,6 +93,47 @@ class TestJSONFormatter:
         data = json.loads(formatter.format(record))
         assert "exception" in data
         assert "ValueError" in data["exception"]
+
+
+class TestSetupLogging:
+    def test_json_format(self):
+        """setup_logging with json format installs JSONFormatter."""
+        logger = logging.getLogger("orchestration")
+        # Clear any existing handlers
+        logger.handlers.clear()
+
+        setup_logging("INFO", "json")
+        assert len(logger.handlers) == 1
+        assert isinstance(logger.handlers[0].formatter, JSONFormatter)
+        assert logger.level == logging.INFO
+
+        # Cleanup
+        logger.handlers.clear()
+
+    def test_text_format(self):
+        """setup_logging with text format installs standard Formatter."""
+        logger = logging.getLogger("orchestration")
+        logger.handlers.clear()
+
+        setup_logging("DEBUG", "text")
+        assert len(logger.handlers) == 1
+        assert not isinstance(logger.handlers[0].formatter, JSONFormatter)
+        assert logger.level == logging.DEBUG
+
+        # Cleanup
+        logger.handlers.clear()
+
+    def test_idempotent(self):
+        """Calling setup_logging twice doesn't duplicate handlers."""
+        logger = logging.getLogger("orchestration")
+        logger.handlers.clear()
+
+        setup_logging("INFO", "json")
+        setup_logging("INFO", "json")
+        assert len(logger.handlers) == 1
+
+        # Cleanup
+        logger.handlers.clear()
 
 
 class TestRequestIDMiddleware:

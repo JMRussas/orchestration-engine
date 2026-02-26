@@ -138,39 +138,64 @@ Tasks that need unavailable resources stay in queue until next tick.
 
 ```
 tests/
-├── conftest.py          # Shared fixtures (tmp_db, app_client, authed_client, mocks)
-├── unit/                # Pure function tests (no HTTP, no DB writes except tmp_db)
-│   ├── test_model_router.py    (15 tests)
-│   ├── test_budget.py          (8 tests)
-│   ├── test_decomposer.py      (8 tests)
-│   ├── test_file_tool.py       (13 tests)
-│   ├── test_auth.py            (17 tests)
-│   ├── test_progress.py        (9 tests)
-│   └── test_registry.py        (7 tests)
-├── integration/         # HTTP endpoint tests via AsyncClient + ASGI transport
-│   ├── test_auth_api.py        (12 tests)
-│   ├── test_projects_api.py    (13 tests)
-│   ├── test_tasks_api.py       (15 tests)
-│   └── test_usage_api.py       (5 tests)
-└── e2e/                 # Full workflow tests
-    └── test_full_workflow.py   (2 tests)
+├── conftest.py                        # Shared fixtures (tmp_db, app_client, authed_client, mocks)
+├── unit/
+│   ├── test_model_router.py           (15 tests)
+│   ├── test_budget.py                 (8 tests)
+│   ├── test_decomposer.py            (8 tests)
+│   ├── test_file_tool.py             (13 tests)
+│   ├── test_auth.py                  (17 tests)
+│   ├── test_progress.py              (9 tests)
+│   ├── test_registry.py              (7 tests)
+│   ├── test_executor_core.py         (31 tests)
+│   ├── test_executor_hardening.py    (7 tests)
+│   ├── test_rag_tools.py             (21 tests)
+│   ├── test_ollama_tool.py           (8 tests)
+│   ├── test_planner_service.py       (18 tests)
+│   ├── test_progress_subscribe.py    (5 tests)
+│   ├── test_resource_monitor.py      (15 tests)
+│   ├── test_auth_middleware.py       (10 tests)
+│   ├── test_app_lifespan.py          (4 tests)
+│   ├── test_logging.py               (9 tests)
+│   └── ...                           (remaining unit tests)
+├── integration/
+│   ├── test_auth_api.py              (12 tests)
+│   ├── test_projects_api.py          (13 tests)
+│   ├── test_tasks_api.py             (15 tests)
+│   ├── test_usage_api.py             (5 tests)
+│   ├── test_auth_gaps.py             (3 tests)
+│   └── ...                           (remaining integration tests)
+└── e2e/
+    └── test_full_workflow.py          (2 tests)
 ```
 
-**Backend (pytest):**
+**Backend (pytest):** 390+ tests, 85% coverage (CI threshold: 75%)
 - `tmp_db` fixture: fresh async Database with inline schema (no Alembic for speed)
 - `app_client`: DI container overrides for db, auth, budget, progress, executor, resource_monitor
 - `authed_client`: app_client + registered user + Bearer token header
 - Claude/Ollama mocked in all tests (no real API calls)
-- Coverage target: 60%+
 
-**Frontend (vitest + @testing-library/react):**
+**Frontend (vitest + @testing-library/react):** 118 tests across 17 files
 
 ```
 frontend/src/
-├── api/client.test.ts          (9 tests — authFetch, token injection, 401 retry)
-├── api/auth.test.ts            (11 tests — login, register, refresh, dedup)
+├── api/client.test.ts              (9 tests — authFetch, token injection, 401 retry)
+├── api/auth.test.ts                (11 tests — login, register, refresh, dedup)
 ├── components/AuthGuard.test.tsx   (3 tests — loading, redirect, render)
-└── components/ErrorBoundary.test.tsx  (2 tests — fallback UI)
+├── components/ErrorBoundary.test.tsx (2 tests — fallback UI)
+├── components/Layout.test.tsx      (4 tests — nav links, user info, logout)
+├── hooks/useFetch.test.ts          (5 tests — success, error, refetch, deps)
+├── hooks/useAuth.test.tsx          (6 tests — mount, login, logout, refresh)
+├── hooks/useSSE.test.ts            (7 tests — connect, events, cleanup)
+├── pages/Dashboard.test.tsx        (10 tests — projects, budget, create flow)
+├── pages/ProjectDetail.test.tsx    (17 tests — status, actions, waves, coverage)
+├── pages/TaskDetail.test.tsx       (14 tests — info, review, verification)
+├── pages/Services.test.tsx         (6 tests — list, refresh, status badges)
+├── pages/Usage.test.tsx            (9 tests — budget, tables, progress bars)
+├── pages/Login.test.tsx            (5 tests — form, submit, error, link)
+├── pages/Register.test.tsx         (5 tests — form, submit, error, link)
+├── pages/NotFound.test.tsx         (2 tests — 404, dashboard link)
+└── App.test.tsx                    (3 tests — routes, 404)
 ```
 
 - jsdom environment via vitest
