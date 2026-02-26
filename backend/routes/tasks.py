@@ -12,6 +12,7 @@ import time
 from dependency_injector.wiring import inject, Provide
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from backend.config import MAX_TASK_RETRIES
 from backend.container import Container
 from backend.db.connection import Database
 from backend.middleware.auth import get_current_user
@@ -116,7 +117,7 @@ async def list_tasks(
     if status:
         query += " AND status = ?"
         params.append(status.value)
-    query += " ORDER BY priority ASC"
+    query += " ORDER BY priority ASC, created_at ASC"
 
     rows = await db.fetchall(query, params)
     return [TaskOut(**d) for d in await _rows_to_tasks(rows, db)]
@@ -193,6 +194,8 @@ async def retry_task(
     row = await _verify_task_ownership(db, task_id, current_user)
     if row["status"] != TaskStatus.FAILED:
         raise HTTPException(400, "Can only retry failed tasks")
+    if row["retry_count"] >= MAX_TASK_RETRIES:
+        raise HTTPException(400, f"Maximum retry limit reached ({MAX_TASK_RETRIES})")
 
     await db.execute_write(
         "UPDATE tasks SET status = ?, error = NULL, output_text = NULL, "

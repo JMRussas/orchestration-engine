@@ -23,6 +23,37 @@ logger = logging.getLogger("orchestration.auth")
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 
+async def _validate_token(auth: AuthService, raw_token: str, expected_type: str = "access") -> dict:
+    """Decode a JWT, check its type, and return the active user.
+
+    Shared logic for Bearer header auth and SSE query-param auth.
+    Raises HTTPException on any failure.
+    """
+    try:
+        payload = auth.decode_token(raw_token)
+    except jwt.PyJWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if payload.get("type") != expected_type:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token type",
+        )
+
+    user = await auth.get_user(payload["sub"])
+    if not user or not user["is_active"]:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or disabled",
+        )
+
+    return user, payload
+
+
 @inject
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
@@ -36,28 +67,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    try:
-        payload = auth.decode_token(credentials.credentials)
-    except jwt.PyJWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    if payload.get("type") != "access":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token type",
-        )
-
-    user = await auth.get_user(payload["sub"])
-    if not user or not user["is_active"]:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found or disabled",
-        )
-
+    user, _payload = await _validate_token(auth, credentials.credentials, "access")
     return user
 
 
@@ -83,6 +93,7 @@ async def get_user_from_sse_token(
     the route parameter. Also accepts legacy type="access" tokens for
     backward compatibility during frontend migration.
     """
+    # Try SSE token first, fall back to access token
     try:
         payload = auth.decode_token(token)
     except jwt.PyJWTError:
@@ -94,30 +105,24 @@ async def get_user_from_sse_token(
     token_type = payload.get("type")
 
     if token_type == "sse":
-        # Verify the token is scoped to this project
         if payload.get("project_id") != project_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="SSE token not valid for this project",
             )
-    elif token_type != "access":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token type",
-        )
+        user, _ = await _validate_token(auth, token, "sse")
+        return user
 
-    user = await auth.get_user(payload["sub"])
-    if not user or not user["is_active"]:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found or disabled",
-        )
-
-    # For access tokens, verify project ownership (SSE tokens are already scoped)
     if token_type == "access":
+        user, _ = await _validate_token(auth, token, "access")
+        # For access tokens, verify project ownership (SSE tokens are already scoped)
         from backend.db.connection import Database
         from backend.routes.projects import _get_owned_project
         db: Database = Container.db()
         await _get_owned_project(db, project_id, user)
+        return user
 
-    return user
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid token type",
+    )

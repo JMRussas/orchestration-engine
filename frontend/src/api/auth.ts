@@ -82,7 +82,16 @@ export async function apiLogin(email: string, password: string): Promise<LoginRe
   return data
 }
 
-export async function apiRefresh(): Promise<boolean> {
+// Deduplicate concurrent refresh calls — all callers share one in-flight promise
+let _refreshPromise: Promise<boolean> | null = null
+
+export function apiRefresh(): Promise<boolean> {
+  if (_refreshPromise) return _refreshPromise
+  _refreshPromise = _doRefresh().finally(() => { _refreshPromise = null })
+  return _refreshPromise
+}
+
+async function _doRefresh(): Promise<boolean> {
   const refreshToken = getRefreshToken()
   if (!refreshToken) return false
 

@@ -6,7 +6,11 @@
       "Bash(git -C \"C:/Users/jruss/Git/Orchestration\" init)",
       "Bash(git -C \"C:/Users/jruss/Git/Orchestration\" status)",
       "Bash(git add -n .)",
-      "Bash(git add .claude/ .gitignore CLAUDE.md backend/ config.example.json frontend/ pyproject.toml requirements-dev.txt requirements.txt run.py tests/)"
+      "Bash(git add .claude/ .gitignore CLAUDE.md backend/ config.example.json frontend/ pyproject.toml requirements-dev.txt requirements.txt run.py tests/)",
+      "Bash(git add .claude/refactor-plan.md CLAUDE.md tests/unit/test_decomposer.py)",
+      "Bash(npm install --save-dev vitest @testing-library/react @testing-library/jest-dom @testing-library/user-event jsdom)",
+      "Bash(npm test)",
+      "Bash(git add .claude/architecture.md .claude/refactor-plan.md .claude/settings.local.json .github/workflows/ci.yml CLAUDE.md Dockerfile backend/app.py backend/config.py backend/db/connection.py backend/db/models_metadata.py backend/middleware/auth.py backend/migrations/versions/003_owner_id_on_delete.py backend/rate_limit.py backend/routes/projects.py backend/routes/services.py backend/routes/tasks.py backend/services/decomposer.py backend/services/executor.py backend/services/model_router.py backend/services/planner.py backend/services/progress.py backend/tools/registry.py config.example.json frontend/package-lock.json frontend/package.json frontend/src/api/auth.ts frontend/src/api/auth.test.ts frontend/src/api/client.test.ts frontend/src/components/AuthGuard.test.tsx frontend/src/components/ErrorBoundary.test.tsx frontend/src/test/setup.ts frontend/vitest.config.ts tests/integration/test_tasks_api.py tests/unit/test_config_validation.py tests/unit/test_model_router.py tests/unit/test_registry.py)"
     ]
   }
 }

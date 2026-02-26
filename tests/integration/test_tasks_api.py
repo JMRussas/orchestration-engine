@@ -165,3 +165,17 @@ class TestRetryTaskEdgeCases:
     async def test_retry_nonexistent_returns_404(self, authed_client):
         resp = await authed_client.post("/api/tasks/nope/retry")
         assert resp.status_code == 404
+
+    async def test_retry_at_max_retries_returns_400(self, authed_client, tmp_db):
+        from backend.config import MAX_TASK_RETRIES
+        from backend.app import container
+        db = container.db()
+        project_id, task_ids = await _seed_project_with_tasks(authed_client, db)
+        # Set retry_count to the limit on the failed task (task_ids[1])
+        await db.execute_write(
+            "UPDATE tasks SET retry_count = ? WHERE id = ?",
+            (MAX_TASK_RETRIES, task_ids[1]),
+        )
+        resp = await authed_client.post(f"/api/tasks/{task_ids[1]}/retry")
+        assert resp.status_code == 400
+        assert "retry limit" in resp.json()["detail"].lower()

@@ -6,6 +6,7 @@
 #  Used by:    pytest
 
 import pytest
+from unittest.mock import patch
 
 from backend.tools.registry import ToolRegistry
 
@@ -52,3 +53,28 @@ class TestToolRegistry:
         names = registry.all_names()
         assert isinstance(names, list)
         assert len(names) >= 6
+
+    def test_no_failed_tools_on_success(self):
+        registry = ToolRegistry()
+        assert registry.failed_tools == []
+
+    def test_partial_registration_on_broken_tool(self, caplog):
+        """A broken tool should be skipped; other tools still register."""
+        import logging
+
+        # Make GenerateImageTool raise during init
+        with patch(
+            "backend.tools.comfyui.GenerateImageTool.__init__",
+            side_effect=RuntimeError("comfyui unavailable"),
+        ):
+            with caplog.at_level(logging.WARNING, logger="orchestration.tools.registry"):
+                registry = ToolRegistry()
+
+        # The broken tool should be in failed_tools
+        assert "GenerateImageTool" in registry.failed_tools
+        # Other tools should still be registered
+        assert "read_file" in registry.all_names()
+        assert "write_file" in registry.all_names()
+        assert "local_llm" in registry.all_names()
+        # Warning should have been logged
+        assert "Failed to register tool GenerateImageTool" in caplog.text

@@ -15,26 +15,21 @@ from fastapi.responses import JSONResponse
 logger = logging.getLogger("orchestration.app")
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
-from backend.config import CORS_ORIGINS, DB_PATH, PROJECT_ROOT, cfg, validate_config
+from backend.config import CORS_ORIGINS, DB_PATH, PROJECT_ROOT, validate_config
 from backend.container import Container
+from backend.rate_limit import limiter
 from backend.middleware.auth import get_current_user
 from backend.routes.auth import router as auth_router
 from backend.routes.projects import router as projects_router
-from backend.routes.services import router as services_router
+from backend.routes.services import health_router, router as services_router
 from backend.routes.events import router as events_router
 from backend.routes.tasks import router as tasks_router
 from backend.routes.usage import router as usage_router
 
 # Create and wire the DI container
 container = Container()
-
-# Rate limiter
-_rate_limit = cfg("server.rate_limit", "60/minute")
-limiter = Limiter(key_func=get_remote_address, default_limits=[_rate_limit])
 
 # Auth dependency for all protected routes
 _auth_dep = [Depends(get_current_user)]
@@ -97,9 +92,12 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+# Health check (public, unauthenticated — for Docker/k8s liveness probes)
+app.include_router(health_router, prefix="/api")
 
 # Auth routes (public — no token required)
 app.include_router(auth_router, prefix="/api")

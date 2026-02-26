@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS projects (
     updated_at REAL NOT NULL,
     completed_at REAL,
     config_json TEXT DEFAULT '{}',
-    owner_id TEXT REFERENCES users(id)
+    owner_id TEXT REFERENCES users(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS plans (

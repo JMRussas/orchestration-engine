@@ -26,10 +26,11 @@ DB_PATH = DATA_DIR / "orchestration.db"
 _config: dict = {}
 
 
-def load_config(path: Path | None = None):
-    """Load configuration from JSON file.
+def _load_config(path: Path | None = None):
+    """Load configuration from JSON file (internal — called once at import time).
 
-    Call during app startup. Raises FileNotFoundError if config is missing.
+    Module-level constants below are snapshots from _config.
+    Do not call this function after import — constants won't update.
     """
     global _config
     config_path = path or CONFIG_PATH
@@ -42,9 +43,9 @@ def load_config(path: Path | None = None):
         _config = json.load(f)
 
 
-# Auto-load if config exists (backward compat for direct imports)
+# Auto-load if config exists at import time
 if CONFIG_PATH.exists():
-    load_config()
+    _load_config()
 
 
 def cfg(path: str, default=None):
@@ -107,6 +108,7 @@ MAX_CONCURRENT_TASKS = cfg("execution.max_concurrent_tasks", 3)
 TICK_INTERVAL = cfg("execution.tick_interval_sec", 2.0)
 MAX_TOOL_ROUNDS = cfg("execution.max_tool_rounds", 10)
 DEFAULT_MAX_TOKENS = cfg("execution.default_max_tokens", 4096)
+MAX_TASK_RETRIES = cfg("execution.max_task_retries", 5)
 
 # Model pricing
 MODEL_PRICING = cfg("model_pricing", {})
@@ -142,12 +144,45 @@ def validate_config():
             "(must be at least 32 characters)"
         )
 
+    # Fatal: port must be valid
+    if not isinstance(PORT, int) or not (1 <= PORT <= 65535):
+        raise ConfigError(f"server.port must be 1-65535, got {PORT}")
+
+    # Fatal: budget limits must be non-negative
+    for label, val in [("budget.daily_limit_usd", BUDGET_DAILY),
+                       ("budget.monthly_limit_usd", BUDGET_MONTHLY),
+                       ("budget.per_project_limit_usd", BUDGET_PER_PROJECT)]:
+        if not isinstance(val, (int, float)) or val < 0:
+            raise ConfigError(f"{label} must be >= 0, got {val}")
+
+    # Fatal: timeouts must be positive
+    for label, val in [("anthropic.timeout", API_TIMEOUT),
+                       ("ollama.generate_timeout", OLLAMA_GENERATE_TIMEOUT)]:
+        if not isinstance(val, (int, float)) or val <= 0:
+            raise ConfigError(f"{label} must be > 0, got {val}")
+
     # Warning: Anthropic API key not set (Ollama-only usage is valid)
     if not ANTHROPIC_API_KEY:
         _logger.warning(
             "ANTHROPIC_API_KEY is not set. Claude API calls will fail. "
             "Set the env var or use Ollama-only mode."
         )
+
+    # Warning: configured models without pricing entries
+    pricing = cfg("model_pricing", {})
+    models_to_check = []
+    planning_model = cfg("anthropic.planning_model")
+    if planning_model:
+        models_to_check.append(("anthropic.planning_model", planning_model))
+    for tier, model_id in (cfg("anthropic.models", {}) or {}).items():
+        models_to_check.append((f"anthropic.models.{tier}", model_id))
+    for label, model_id in models_to_check:
+        if model_id not in pricing:
+            _logger.warning(
+                "Model '%s' (%s) has no entry in model_pricing — "
+                "costs will be recorded as $0.00",
+                model_id, label,
+            )
 
 
 class ConfigError(Exception):

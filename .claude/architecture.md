@@ -114,8 +114,16 @@ Available tools:
 
 ## Rate Limiting
 
-- slowapi middleware with configurable default (`server.rate_limit`, default `60/minute`)
+- Shared `limiter` instance in `backend/rate_limit.py` (avoids circular imports between app and routes)
+- Default: configurable via `server.rate_limit` (default `60/minute`)
 - Plan generation endpoint: `5/minute` (expensive Claude call)
+
+## Health Check
+
+- `GET /api/health` — unauthenticated, lightweight liveness probe
+- Returns `{"status": "ok"}` with 200 if the app is running
+- Used by Docker `HEALTHCHECK` and k8s liveness probes
+- Does NOT check external resources (Ollama, ComfyUI) — use `/api/services` for that
 
 ## Resource Monitoring
 
@@ -148,17 +156,34 @@ tests/
     └── test_full_workflow.py   (2 tests)
 ```
 
+**Backend (pytest):**
 - `tmp_db` fixture: fresh async Database with inline schema (no Alembic for speed)
 - `app_client`: DI container overrides for db, auth, budget, progress, executor, resource_monitor
 - `authed_client`: app_client + registered user + Bearer token header
 - Claude/Ollama mocked in all tests (no real API calls)
 - Coverage target: 60%+
 
+**Frontend (vitest + @testing-library/react):**
+
+```
+frontend/src/
+├── api/client.test.ts          (9 tests — authFetch, token injection, 401 retry)
+├── api/auth.test.ts            (11 tests — login, register, refresh, dedup)
+├── components/AuthGuard.test.tsx   (3 tests — loading, redirect, render)
+└── components/ErrorBoundary.test.tsx  (2 tests — fallback UI)
+```
+
+- jsdom environment via vitest
+- Global fetch mocked per test
+- localStorage mocked via jsdom
+- Setup file loads @testing-library/jest-dom matchers
+
 ## Dependency Map
 
 | File | Role | Depends On | Used By |
 |------|------|-----------|---------|
 | config.py | Config loader | config.json | Everything |
+| rate_limit.py | Shared limiter | config | app.py, routes/projects |
 | container.py | DI container | config, all services | app.py, routes |
 | db/connection.py | Async SQLite | aiosqlite, config | All services, routes |
 | db/migrate.py | Alembic runner | alembic, models_metadata | db/connection.py |
@@ -198,3 +223,9 @@ tests/
 - **EventSource can't send headers** — SSE auth uses query-param token (`?token=...`) validated by `get_user_from_token_param`.
 - **Alembic + SQLite**: Must use `render_as_batch=True` in `env.py` because SQLite doesn't support `ALTER TABLE DROP COLUMN` natively.
 - **Test DB uses inline schema, not Alembic** — faster and avoids event loop issues. Keep inline `_SCHEMA` in `connection.py` in sync with migration files.
+- `_load_config()` is private — module-level constants are snapshots. Do NOT call it after import; constants won't update.
+- `validate_config()` checks bounds on port (1-65535), budget limits (>= 0), and timeouts (> 0) in addition to secret key length.
+- `projects.owner_id` uses `ON DELETE SET NULL` — deleting a user nulls their projects (makes them admin-visible) instead of cascading delete.
+- Rate limiter: shared instance in `backend/rate_limit.py` avoids circular imports between `app.py` ↔ `routes/projects.py`.
+- Auth middleware: `_validate_token()` shared helper deduplicates JWT validation for Bearer and SSE token paths.
+- Frontend refresh dedup: `_refreshPromise` module-level variable ensures concurrent 401s share one refresh call.

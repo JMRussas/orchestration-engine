@@ -16,6 +16,10 @@ from backend.exceptions import BudgetExhaustedError, NotFoundError, PlanParseErr
 from backend.models.enums import PlanStatus, ProjectStatus
 from backend.services.model_router import calculate_cost
 
+# Token estimates for budget reservation before API calls
+_EST_PLANNING_INPUT_TOKENS = 2000   # system prompt (~1.5k) + requirements
+_EST_PLANNING_OUTPUT_TOKENS = 2000  # plan JSON response
+
 
 def _extract_json_object(text: str) -> dict | None:
     """Extract the first balanced JSON object from text.
@@ -123,7 +127,7 @@ async def generate_plan(
     project_name = row["name"]
 
     # Reserve budget before making the API call (prevents TOCTOU race)
-    estimated_cost = calculate_cost(PLANNING_MODEL, 2000, 2000)
+    estimated_cost = calculate_cost(PLANNING_MODEL, _EST_PLANNING_INPUT_TOKENS, _EST_PLANNING_OUTPUT_TOKENS)
     if not await budget.reserve_spend(estimated_cost):
         raise BudgetExhaustedError("Budget limit reached. Cannot generate plan.")
 

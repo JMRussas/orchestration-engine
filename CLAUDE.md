@@ -18,8 +18,13 @@ cd frontend && npm run build                # builds to frontend/dist/
 
 # Tests
 pip install -r requirements-dev.txt
-python -m pytest tests/                     # run all tests
+python -m pytest tests/                     # run all backend tests
 python -m pytest tests/ --cov=backend       # with coverage report
+cd frontend && npm test                     # run frontend tests
+
+# Docker
+docker build -t orchestration .
+docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 ```
 
 ## Project Structure
@@ -30,6 +35,7 @@ python -m pytest tests/ --cov=backend       # with coverage report
 | `config.json` | All settings (gitignored) |
 | `config.example.json` | Config template with all options |
 | `backend/app.py` | FastAPI app, lifespan, CORS, rate limiting, routers |
+| `backend/rate_limit.py` | Shared slowapi limiter instance |
 | `backend/config.py` | Config loader, constants, `validate_config()` startup checks |
 | `backend/container.py` | dependency-injector `DeclarativeContainer` |
 | `backend/exceptions.py` | Typed exception hierarchy (`NotFoundError`, `BudgetExhaustedError`, etc.) |
@@ -54,7 +60,7 @@ python -m pytest tests/ --cov=backend       # with coverage report
 | `backend/tools/` | Tool implementations (RAG, Ollama, ComfyUI, file) |
 | `frontend/` | React 19 + TypeScript + Vite UI (ErrorBoundary, 404 page) |
 | `Dockerfile` | Multi-stage build (frontend + backend) |
-| `.github/workflows/ci.yml` | GitHub Actions CI (tests, lint, frontend build) |
+| `.github/workflows/ci.yml` | GitHub Actions CI (tests, lint, frontend build+test, E2E) |
 | `tests/` | pytest suite (unit, integration, E2E) |
 | `data/orchestration.db` | SQLite database (auto-created) |
 
@@ -76,10 +82,11 @@ python -m pytest tests/ --cov=backend       # with coverage report
 - **Models**: Ollama (free) for simple tasks, Haiku ($) for medium, Sonnet ($$) for complex
 - **Tools**: registered in `ToolRegistry` class, injected via DI container
 - **SSE**: short-lived token via `POST /api/events/{project_id}/token`, then stream via `GET /api/events/{project_id}?token=...`
-- **Rate limiting**: slowapi, default 60/minute, 5/minute on plan generation
+- **Health probe**: `GET /api/health` — unauthenticated, returns `{"status": "ok"}` for Docker/k8s liveness checks
+- **Rate limiting**: slowapi (shared instance in `rate_limit.py`), default 60/minute, 5/minute on plan generation
 - **Exceptions**: typed hierarchy in `backend/exceptions.py` — routes map specific exceptions to HTTP status codes
 - **Validation**: Pydantic `Field` constraints on all mutable schemas (min/max length, ge/le bounds)
-- **Tests**: pytest-asyncio (auto mode), 200+ tests, 60%+ coverage target
+- **Tests**: Backend: pytest-asyncio (auto mode), 211+ tests, 60%+ coverage. Frontend: vitest + @testing-library/react, 25+ tests
 
 ## Dependencies
 

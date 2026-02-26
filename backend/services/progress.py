@@ -106,3 +106,5 @@ class ProgressManager:
             subs = self._subscribers.get(project_id, [])
             if queue in subs:
                 subs.remove(queue)
+            if not subs and project_id in self._subscribers:
+                del self._subscribers[project_id]

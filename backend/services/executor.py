@@ -33,6 +33,9 @@ from backend.config import (
 from backend.models.enums import ModelTier, ProjectStatus, TaskStatus
 from backend.services.model_router import calculate_cost, get_model_id
 
+# Token estimate for budget reservation before task execution
+_EST_TASK_INPUT_TOKENS = 1500  # system prompt + context + tool definitions
+
 # Transient errors that warrant automatic retry with backoff
 _TRANSIENT_ERRORS = (
     anthropic.RateLimitError,
@@ -150,7 +153,7 @@ class Executor:
                 tier = ModelTier(task_row["model_tier"])
                 est_cost = 0.0
                 if tier != ModelTier.OLLAMA:
-                    est_cost = calculate_cost(get_model_id(tier), 1500, task_row["max_tokens"])
+                    est_cost = calculate_cost(get_model_id(tier), _EST_TASK_INPUT_TOKENS, task_row["max_tokens"])
                     if not await self._budget.reserve_spend(est_cost):
                         continue
                     if not await self._budget.can_spend_project(pid, est_cost):
@@ -380,6 +383,8 @@ class Executor:
         messages = [{"role": "user", "content": task_row["description"]}]
 
         client = self._client
+        if client is None:
+            raise RuntimeError("Executor not started — call start() before dispatching tasks")
 
         total_prompt = 0
         total_completion = 0

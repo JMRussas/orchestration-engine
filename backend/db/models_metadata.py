@@ -44,7 +44,7 @@ projects = Table(
     Column("updated_at", Float, nullable=False),
     Column("completed_at", Float),
     Column("config_json", Text, server_default="{}"),
-    Column("owner_id", Text, ForeignKey("users.id")),
+    Column("owner_id", Text, ForeignKey("users.id", ondelete="SET NULL")),
 )
 
 plans = Table(

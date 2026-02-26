@@ -14,6 +14,9 @@ from backend.exceptions import CycleDetectedError, InvalidStateError, NotFoundEr
 from backend.models.enums import PlanStatus, ProjectStatus, TaskStatus
 from backend.services.model_router import estimate_task_cost, recommend_tier, recommend_tools
 
+# Token estimate for budget estimation during decomposition
+_EST_DECOMPOSE_INPUT_TOKENS = 1500  # system prompt + context + tools
+
 
 async def decompose_plan(project_id: str, plan_id: str, *, db) -> dict:
     """Convert an approved plan into executable tasks with dependencies.
@@ -75,8 +78,7 @@ async def decompose_plan(project_id: str, plan_id: str, *, db) -> dict:
         priority = i * 10
 
         # Estimate cost
-        est_input = 1500  # ~system prompt + context + tools
-        est_cost = estimate_task_cost(tier, est_input, DEFAULT_MAX_TOKENS)
+        est_cost = estimate_task_cost(tier, _EST_DECOMPOSE_INPUT_TOKENS, DEFAULT_MAX_TOKENS)
         total_estimated_cost += est_cost
 
         write_statements.append((

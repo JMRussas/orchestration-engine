@@ -40,6 +40,9 @@ jobs:
       - name: Run tests with coverage
         run: python -m pytest tests/ --cov=backend --cov-report=term-missing --tb=short -q
 
+      - name: Run E2E tests
+        run: python -m pytest tests/e2e/ --tb=short -q
+
   lint:
     runs-on: ubuntu-latest
 
@@ -75,6 +78,10 @@ jobs:
       - name: Type check
         working-directory: frontend
         run: npx tsc --noEmit
+
+      - name: Run tests
+        working-directory: frontend
+        run: npm test
 
       - name: Build
         working-directory: frontend

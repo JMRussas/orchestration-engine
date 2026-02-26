@@ -38,6 +38,20 @@ class TestCalculateCost:
         with patch("backend.services.model_router.MODEL_PRICING", {}):
             assert calculate_cost("no-such-model", 1000, 500) == 0.0
 
+    def test_unknown_model_logs_warning(self, caplog):
+        """Unknown model should log a warning (once per model)."""
+        import logging
+        from backend.services.model_router import _warned_models
+        _warned_models.discard("fake-model-abc")  # ensure clean state
+        with patch("backend.services.model_router.MODEL_PRICING", {}):
+            with caplog.at_level(logging.WARNING, logger="orchestration.model_router"):
+                calculate_cost("fake-model-abc", 1000, 500)
+                calculate_cost("fake-model-abc", 2000, 1000)
+        # Should warn only once despite two calls
+        warnings = [r for r in caplog.records if "fake-model-abc" in r.message]
+        assert len(warnings) == 1
+        _warned_models.discard("fake-model-abc")  # cleanup
+
     def test_zero_tokens(self):
         """Zero tokens should produce zero cost even for a priced model."""
         pricing = {

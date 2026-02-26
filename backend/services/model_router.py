@@ -5,19 +5,34 @@
 #  Depends on: backend/config.py
 #  Used by:    services/planner.py, services/decomposer.py, services/executor.py
 
+import logging
+
 from backend.config import MODEL_PRICING, cfg
 from backend.models.enums import ModelTier
+
+logger = logging.getLogger("orchestration.model_router")
+
+# Track which unknown models we've already warned about (avoid log spam)
+_warned_models: set[str] = set()
 
 
 # ---------------------------------------------------------------------------
 # Model ID resolution
 # ---------------------------------------------------------------------------
 
+# Fallback model IDs when config is missing — must be valid Anthropic model IDs
+_DEFAULT_MODELS = {
+    "haiku": "claude-haiku-4-5-20251001",
+    "sonnet": "claude-sonnet-4-6",
+    "opus": "claude-opus-4-6",
+}
+
+
 def get_model_id(tier: ModelTier) -> str:
     """Resolve a model tier to the actual model ID from config."""
     if tier == ModelTier.OLLAMA:
         return cfg("ollama.default_model", "qwen2.5-coder:14b")
-    return cfg(f"anthropic.models.{tier.value}", f"claude-{tier.value}")
+    return cfg(f"anthropic.models.{tier.value}", _DEFAULT_MODELS.get(tier.value, f"claude-{tier.value}"))
 
 
 # ---------------------------------------------------------------------------
@@ -28,6 +43,9 @@ def calculate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> fl
     """Calculate the USD cost for a given token usage."""
     pricing = MODEL_PRICING.get(model, {})
     if not pricing:
+        if model not in _warned_models:
+            logger.warning("Unknown model '%s' — cost recorded as $0.00", model)
+            _warned_models.add(model)
         return 0.0
 
     input_cost = (prompt_tokens / 1_000_000) * pricing.get("input_per_mtok", 0)

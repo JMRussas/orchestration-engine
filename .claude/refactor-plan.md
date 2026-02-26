@@ -547,11 +547,11 @@ Fix the executor and tool system to be robust under concurrent load.
 
 ---
 
-## Phase 4: Validation & Error Handling (Partial)
+## Phase 4: Validation & Error Handling ✅ DONE
 
 Input validation, error types, and defensive coding.
 
-> **Partially completed:** 4.1, 4.5, 4.6, 4.7 done. 4.2, 4.3, 4.4, 4.8 remaining.
+> **Completed:** All 8 items implemented, 211 tests passing (5 new Phase 4 tests).
 
 ### 4.1 — Add Bounds to TaskUpdate and Other Schemas ✅ DONE
 
@@ -572,7 +572,7 @@ Input validation, error types, and defensive coding.
 
 ---
 
-### 4.2 — Add Retry Count Limit to Task Retry Endpoint
+### 4.2 — Add Retry Count Limit to Task Retry Endpoint ✅ DONE
 
 **Issue:** `tasks.py:161-181` allows infinite retries.
 
@@ -587,7 +587,7 @@ Input validation, error types, and defensive coding.
 
 ---
 
-### 4.3 — Error on Unknown Model in Cost Calculation
+### 4.3 — Error on Unknown Model in Cost Calculation ✅ DONE
 
 **Issue:** `model_router.py:29-30` silently returns 0.0 for unknown models.
 
@@ -603,7 +603,7 @@ Input validation, error types, and defensive coding.
 
 ---
 
-### 4.4 — Fix Hardcoded Token Estimates
+### 4.4 — Fix Hardcoded Token Estimates ✅ DONE
 
 **Issue:** Planner uses `2000/2000`, executor uses `1500`, decomposer uses `1500` — all hardcoded.
 
@@ -709,7 +709,7 @@ Input validation, error types, and defensive coding.
 
 ---
 
-### 4.8 — ToolRegistry Partial Registration
+### 4.8 — ToolRegistry Partial Registration ✅ DONE
 
 **Issue:** One broken tool prevents the entire app from starting.
 

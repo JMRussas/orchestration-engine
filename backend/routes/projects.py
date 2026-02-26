@@ -13,12 +13,8 @@ import uuid
 
 from dependency_injector.wiring import inject, Provide
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 from backend.container import Container
-
-_limiter = Limiter(key_func=get_remote_address)
 from backend.db.connection import Database
 from backend.exceptions import (
     BudgetExhaustedError,
@@ -28,8 +24,9 @@ from backend.exceptions import (
     OrchestrationError,
     PlanParseError,
 )
+from backend.rate_limit import limiter
 from backend.middleware.auth import get_current_user
-from backend.models.enums import PlanStatus, ProjectStatus
+from backend.models.enums import PlanStatus, ProjectStatus, TaskStatus
 from backend.models.schemas import PlanOut, ProjectCreate, ProjectOut, ProjectUpdate
 from backend.services.budget import BudgetManager
 
@@ -40,8 +37,15 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 # Helpers
 # ---------------------------------------------------------------------------
 
-async def _row_to_project(row, db: Database, include_task_summary: bool = False) -> dict:
-    """Convert a DB row to a ProjectOut-compatible dict."""
+async def _row_to_project(
+    row, db: Database,
+    include_task_summary: bool = False,
+    preloaded_summary: dict | None = None,
+) -> dict:
+    """Convert a DB row to a ProjectOut-compatible dict.
+
+    For batch use, pass preloaded_summary to avoid per-project DB queries.
+    """
     data = {
         "id": row["id"],
         "name": row["name"],
@@ -54,16 +58,19 @@ async def _row_to_project(row, db: Database, include_task_summary: bool = False)
     }
 
     if include_task_summary:
-        tasks = await db.fetchall(
-            "SELECT status, COUNT(*) as cnt FROM tasks WHERE project_id = ? GROUP BY status",
-            (row["id"],),
-        )
-        summary = {"total": 0, "completed": 0, "running": 0, "failed": 0}
-        for t in tasks:
-            summary["total"] += t["cnt"]
-            if t["status"] in summary:
-                summary[t["status"]] = t["cnt"]
-        data["task_summary"] = summary
+        if preloaded_summary is not None:
+            data["task_summary"] = preloaded_summary
+        else:
+            tasks = await db.fetchall(
+                "SELECT status, COUNT(*) as cnt FROM tasks WHERE project_id = ? GROUP BY status",
+                (row["id"],),
+            )
+            summary = {"total": 0, "completed": 0, "running": 0, "failed": 0}
+            for t in tasks:
+                summary["total"] += t["cnt"]
+                if t["status"] in summary:
+                    summary[t["status"]] = t["cnt"]
+            data["task_summary"] = summary
 
     return data
 
@@ -126,7 +133,33 @@ async def list_projects(
     params.extend([limit, offset])
 
     rows = await db.fetchall(query, params)
-    return [ProjectOut(**await _row_to_project(r, db, include_task_summary=True)) for r in rows]
+    if not rows:
+        return []
+
+    # Batch-load task summaries in a single query (avoids N+1)
+    project_ids = [r["id"] for r in rows]
+    placeholders = ",".join("?" * len(project_ids))
+    summary_rows = await db.fetchall(
+        f"SELECT project_id, status, COUNT(*) as cnt FROM tasks "
+        f"WHERE project_id IN ({placeholders}) GROUP BY project_id, status",
+        project_ids,
+    )
+    summaries: dict[str, dict] = {}
+    for sr in summary_rows:
+        pid = sr["project_id"]
+        if pid not in summaries:
+            summaries[pid] = {"total": 0, "completed": 0, "running": 0, "failed": 0}
+        summaries[pid]["total"] += sr["cnt"]
+        if sr["status"] in summaries[pid]:
+            summaries[pid][sr["status"]] = sr["cnt"]
+
+    return [
+        ProjectOut(**await _row_to_project(
+            r, db, include_task_summary=True,
+            preloaded_summary=summaries.get(r["id"], {"total": 0, "completed": 0, "running": 0, "failed": 0}),
+        ))
+        for r in rows
+    ]
 
 
 @router.get("/{project_id}")
@@ -195,7 +228,7 @@ async def delete_project(
 # ---------------------------------------------------------------------------
 
 @router.post("/{project_id}/plan")
-@_limiter.limit("5/minute")
+@limiter.limit("5/minute")
 @inject
 async def trigger_plan(
     request: Request,
@@ -337,9 +370,10 @@ async def cancel_project(
 
     now = time.time()
     await db.execute_write(
-        "UPDATE tasks SET status = 'cancelled', updated_at = ? "
-        "WHERE project_id = ? AND status IN ('pending', 'blocked', 'queued')",
-        (now, project_id),
+        "UPDATE tasks SET status = ?, updated_at = ? "
+        "WHERE project_id = ? AND status IN (?, ?, ?)",
+        (TaskStatus.CANCELLED, now, project_id,
+         TaskStatus.PENDING, TaskStatus.BLOCKED, TaskStatus.QUEUED),
     )
     await db.execute_write(
         "UPDATE projects SET status = ?, updated_at = ? WHERE id = ?",

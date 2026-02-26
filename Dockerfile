@@ -24,10 +24,20 @@ COPY run.py pyproject.toml ./
 # Copy built frontend
 COPY --from=frontend /app/frontend/dist frontend/dist/
 
-# Create data directory
-RUN mkdir -p data
+# Create non-root user
+RUN adduser --disabled-password --gecos "" app
+
+# Create data directory (owned by app user)
+RUN mkdir -p data && chown app:app data
+
+# Switch to non-root user
+USER app
 
 EXPOSE 5200
+
+# Health check — lightweight probe, no auth required
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5200/api/health')" || exit 1
 
 # Config must be mounted at runtime: -v ./config.json:/app/config.json
 CMD ["python", "run.py"]

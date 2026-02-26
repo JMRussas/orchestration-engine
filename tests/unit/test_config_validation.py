@@ -34,3 +34,22 @@ class TestValidateConfig:
                 with caplog.at_level(logging.WARNING):
                     validate_config()
                 assert "ANTHROPIC_API_KEY is not set" in caplog.text
+
+    def test_warns_on_model_pricing_mismatch(self, caplog):
+        """Models configured without pricing entries should trigger a warning."""
+        import logging
+        with patch("backend.config.AUTH_SECRET_KEY", "a" * 32), \
+             patch("backend.config.ANTHROPIC_API_KEY", "sk-test"), \
+             patch("backend.config.cfg") as mock_cfg:
+            def cfg_side_effect(path, default=None):
+                return {
+                    "model_pricing": {},
+                    "anthropic.planning_model": "claude-sonnet-4-6",
+                    "anthropic.models": {"haiku": "claude-haiku-4-5-20251001"},
+                }.get(path, default)
+            mock_cfg.side_effect = cfg_side_effect
+            with caplog.at_level(logging.WARNING):
+                validate_config()
+            assert "claude-sonnet-4-6" in caplog.text
+            assert "claude-haiku-4-5-20251001" in caplog.text
+            assert "no entry in model_pricing" in caplog.text
