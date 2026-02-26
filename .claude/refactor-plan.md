@@ -547,11 +547,13 @@ Fix the executor and tool system to be robust under concurrent load.
 
 ---
 
-## Phase 4: Validation & Error Handling
+## Phase 4: Validation & Error Handling (Partial)
 
 Input validation, error types, and defensive coding.
 
-### 4.1 — Add Bounds to TaskUpdate and Other Schemas
+> **Partially completed:** 4.1, 4.5, 4.6, 4.7 done. 4.2, 4.3, 4.4, 4.8 remaining.
+
+### 4.1 — Add Bounds to TaskUpdate and Other Schemas ✅ DONE
 
 **Files:** `backend/models/schemas.py`
 
@@ -624,7 +626,7 @@ Input validation, error types, and defensive coding.
 
 ---
 
-### 4.5 — Fix JSON Extraction Regex in Planner
+### 4.5 — Fix JSON Extraction Regex in Planner ✅ DONE
 
 **Issue:** Greedy `\{[\s\S]*\}` captures from first `{` to last `}` in entire response.
 
@@ -644,7 +646,7 @@ Input validation, error types, and defensive coding.
 
 ---
 
-### 4.6 — Improve Decomposer Validation
+### 4.6 — Improve Decomposer Validation (Partial — cycle detection done) ✅
 
 **Issue:** Silent drop of non-numeric dependency indices. No cycle detection. No plan status check. `_update_blocked_status` runs outside the main transaction.
 
@@ -667,7 +669,7 @@ Input validation, error types, and defensive coding.
 
 ---
 
-### 4.7 — Create Exception Hierarchy for HTTP Mapping
+### 4.7 — Create Exception Hierarchy for HTTP Mapping ✅ DONE
 
 **Issue:** Services raise `ValueError` for everything — routes must pattern-match on message strings to decide HTTP status codes.
 
@@ -730,9 +732,11 @@ Input validation, error types, and defensive coding.
 
 ---
 
-## Phase 5: Frontend
+## Phase 5: Frontend (Partial)
 
-### 5.1 — Add ErrorBoundary Component
+> **Partially completed:** 5.1, 5.2, 5.4 done. 5.3, 5.5 remaining.
+
+### 5.1 — Add ErrorBoundary Component ✅ DONE
 
 **Files:** New `frontend/src/components/ErrorBoundary.tsx`, update `frontend/src/App.tsx`
 
@@ -743,7 +747,7 @@ Input validation, error types, and defensive coding.
 
 ---
 
-### 5.2 — Add 404 Catch-All Route
+### 5.2 — Add 404 Catch-All Route ✅ DONE
 
 **Files:** New `frontend/src/pages/NotFound.tsx`, update `frontend/src/App.tsx`
 
@@ -773,7 +777,7 @@ Input validation, error types, and defensive coding.
 
 ---
 
-### 5.4 — Route apiGetMe Through authFetch
+### 5.4 — Route apiGetMe Through authFetch ✅ DONE
 
 **Issue:** `apiGetMe` bypasses the `authFetch` wrapper, missing auto-refresh on 401.
 

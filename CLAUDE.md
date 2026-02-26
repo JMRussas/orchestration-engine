@@ -32,6 +32,7 @@ python -m pytest tests/ --cov=backend       # with coverage report
 | `backend/app.py` | FastAPI app, lifespan, CORS, rate limiting, routers |
 | `backend/config.py` | Config loader, constants, `validate_config()` startup checks |
 | `backend/container.py` | dependency-injector `DeclarativeContainer` |
+| `backend/exceptions.py` | Typed exception hierarchy (`NotFoundError`, `BudgetExhaustedError`, etc.) |
 | `backend/logging_config.py` | Structured logging setup |
 | `backend/db/connection.py` | Async SQLite (aiosqlite, WAL mode) |
 | `backend/db/migrate.py` | Programmatic Alembic migration runner |
@@ -43,7 +44,7 @@ python -m pytest tests/ --cov=backend       # with coverage report
 | `backend/routes/` | REST endpoints (projects, tasks, usage, services, events) |
 | `backend/services/auth.py` | Password hashing, JWT encode/decode, SSE tokens, user management |
 | `backend/services/planner.py` | Claude-powered plan generation |
-| `backend/services/decomposer.py` | Plan → task rows + dependency DAG |
+| `backend/services/decomposer.py` | Plan → task rows + dependency DAG (with cycle detection) |
 | `backend/services/executor.py` | Async worker pool, tool loop |
 | `backend/services/budget.py` | Spending tracking, limit enforcement |
 | `backend/services/model_router.py` | Model tier selection, cost calculation |
@@ -51,7 +52,9 @@ python -m pytest tests/ --cov=backend       # with coverage report
 | `backend/services/progress.py` | SSE broadcast, event persistence |
 | `backend/tools/registry.py` | Injectable `ToolRegistry` class |
 | `backend/tools/` | Tool implementations (RAG, Ollama, ComfyUI, file) |
-| `frontend/` | React 19 + TypeScript + Vite UI |
+| `frontend/` | React 19 + TypeScript + Vite UI (ErrorBoundary, 404 page) |
+| `Dockerfile` | Multi-stage build (frontend + backend) |
+| `.github/workflows/ci.yml` | GitHub Actions CI (tests, lint, frontend build) |
 | `tests/` | pytest suite (unit, integration, E2E) |
 | `data/orchestration.db` | SQLite database (auto-created) |
 
@@ -74,7 +77,9 @@ python -m pytest tests/ --cov=backend       # with coverage report
 - **Tools**: registered in `ToolRegistry` class, injected via DI container
 - **SSE**: short-lived token via `POST /api/events/{project_id}/token`, then stream via `GET /api/events/{project_id}?token=...`
 - **Rate limiting**: slowapi, default 60/minute, 5/minute on plan generation
-- **Tests**: pytest-asyncio (auto mode), 160 tests, 60%+ coverage target
+- **Exceptions**: typed hierarchy in `backend/exceptions.py` — routes map specific exceptions to HTTP status codes
+- **Validation**: Pydantic `Field` constraints on all mutable schemas (min/max length, ge/le bounds)
+- **Tests**: pytest-asyncio (auto mode), 200+ tests, 60%+ coverage target
 
 ## Dependencies
 

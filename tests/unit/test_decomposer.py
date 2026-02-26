@@ -9,6 +9,7 @@ import json
 
 import pytest
 
+from backend.exceptions import InvalidStateError, NotFoundError
 from backend.models.enums import PlanStatus, ProjectStatus, TaskStatus
 from backend.services.decomposer import decompose_plan
 
@@ -86,7 +87,7 @@ class TestDecomposePlan:
 
     async def test_raises_on_missing_plan(self, seeded_db):
         tmp_db, project_id, _ = seeded_db
-        with pytest.raises(ValueError, match="not found"):
+        with pytest.raises(NotFoundError, match="not found"):
             await decompose_plan(project_id, "nonexistent_plan", db=tmp_db)
 
     async def test_raises_on_empty_plan(self, seeded_db):
@@ -98,5 +99,5 @@ class TestDecomposePlan:
             (json.dumps({"summary": "Empty", "tasks": []}), plan_id),
         )
 
-        with pytest.raises(ValueError, match="no tasks"):
+        with pytest.raises(InvalidStateError, match="no tasks"):
             await decompose_plan(project_id, plan_id, db=tmp_db)
