@@ -1,31 +1,39 @@
 // Orchestration Engine - Dashboard Page
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { listProjects, createProject } from '../api/projects'
 import { getBudget } from '../api/usage'
 import { listServices } from '../api/services'
+import { useFetch } from '../hooks/useFetch'
 import type { Project, BudgetStatus, Resource } from '../types'
 
+interface DashboardData {
+  projects: Project[]
+  budget: BudgetStatus | null
+  services: Resource[]
+}
+
 export default function Dashboard() {
-  const [projects, setProjects] = useState<Project[]>([])
-  const [budget, setBudget] = useState<BudgetStatus | null>(null)
-  const [services, setServices] = useState<Resource[]>([])
   const [showForm, setShowForm] = useState(false)
   const [name, setName] = useState('')
   const [requirements, setRequirements] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [fetchError, setFetchError] = useState('')
   const navigate = useNavigate()
 
-  useEffect(() => {
-    Promise.all([
-      listProjects().then(setProjects),
-      getBudget().then(setBudget),
-      listServices().then(setServices),
-    ]).catch(e => setFetchError(String(e)))
-  }, [])
+  const { data, error: fetchError } = useFetch<DashboardData>(
+    () => Promise.all([
+      listProjects(),
+      getBudget().catch(() => null),
+      listServices().catch(() => []),
+    ]).then(([projects, budget, services]) => ({ projects, budget, services })),
+    [],
+  )
+
+  const projects = data?.projects ?? []
+  const budget = data?.budget ?? null
+  const services = data?.services ?? []
 
   const handleCreate = async () => {
     if (!name.trim() || !requirements.trim()) {

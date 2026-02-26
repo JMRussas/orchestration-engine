@@ -92,7 +92,12 @@ async def auth_service(tmp_db):
 
 @pytest.fixture
 async def app_client(tmp_db):
-    """FastAPI TestClient with a fresh database. Uses DI container overrides."""
+    """FastAPI TestClient with a fresh database. Uses DI container overrides.
+
+    Uses explicit try/finally with reset_override() instead of context managers
+    to ensure DI state is fully cleaned up — async fixture teardown can have
+    edge cases where nested context managers don't exit cleanly in full suite runs.
+    """
     from httpx import ASGITransport, AsyncClient
     from backend.app import app, container
     from backend.services.auth import AuthService
@@ -115,19 +120,30 @@ async def app_client(tmp_db):
     budget = BudgetManager(db=tmp_db)
     progress = ProgressManager(db=tmp_db)
 
-    with (
-        container.db.override(providers.Object(tmp_db)),
-        container.auth.override(providers.Object(auth)),
-        container.budget.override(providers.Object(budget)),
-        container.progress.override(providers.Object(progress)),
-        container.executor.override(providers.Object(mock_executor)),
-        container.resource_monitor.override(providers.Object(mock_rm)),
-        container.http_client.override(providers.Object(mock_http)),
-        patch.object(tmp_db, "init", new_callable=AsyncMock),
-    ):
+    init_patcher = patch.object(tmp_db, "init", new_callable=AsyncMock)
+
+    container.db.override(providers.Object(tmp_db))
+    container.auth.override(providers.Object(auth))
+    container.budget.override(providers.Object(budget))
+    container.progress.override(providers.Object(progress))
+    container.executor.override(providers.Object(mock_executor))
+    container.resource_monitor.override(providers.Object(mock_rm))
+    container.http_client.override(providers.Object(mock_http))
+    init_patcher.start()
+
+    try:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             yield client
+    finally:
+        init_patcher.stop()
+        container.db.reset_override()
+        container.auth.reset_override()
+        container.budget.reset_override()
+        container.progress.reset_override()
+        container.executor.reset_override()
+        container.resource_monitor.reset_override()
+        container.http_client.reset_override()
 
 
 @pytest.fixture

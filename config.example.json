@@ -60,7 +60,15 @@
     "tick_interval_sec": 2.0,
     "max_tool_rounds": 10,
     "default_max_tokens": 4096,
-    "max_task_retries": 5
+    "max_task_retries": 5,
+    "wave_checkpoints": false,
+    "context_forward_max_chars": 2000,
+    "verification_enabled": false,
+    "verification_model": "claude-haiku-4-5-20251001",
+    "verification_max_tokens": 1024,
+    "checkpoint_on_retry_exhausted": true,
+    "shutdown_grace_seconds": 30,
+    "stale_task_threshold_seconds": 300
   },
   "model_pricing": {
     "claude-haiku-4-5-20251001": { "input_per_mtok": 1.0, "output_per_mtok": 5.0 },

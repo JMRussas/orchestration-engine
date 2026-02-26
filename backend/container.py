@@ -12,7 +12,9 @@ from dependency_injector import containers, providers
 from backend.db.connection import Database
 from backend.services.auth import AuthService
 from backend.services.budget import BudgetManager
+from backend.services.decomposer import DecomposerService
 from backend.services.executor import Executor
+from backend.services.planner import PlannerService
 from backend.services.progress import ProgressManager
 from backend.services.resource_monitor import ResourceMonitor
 from backend.tools.registry import ToolRegistry
@@ -34,6 +36,7 @@ class Container(containers.DeclarativeContainer):
             "backend.routes.services",
             "backend.routes.events",
             "backend.routes.auth",
+            "backend.routes.checkpoints",
             "backend.middleware.auth",
         ]
     )
@@ -48,6 +51,10 @@ class Container(containers.DeclarativeContainer):
     budget = providers.Singleton(BudgetManager, db=db)
     progress = providers.Singleton(ProgressManager, db=db)
     resource_monitor = providers.Singleton(ResourceMonitor)
+
+    # --- Planning & Decomposition ---
+    planner = providers.Factory(PlannerService, db=db, budget=budget)
+    decomposer = providers.Factory(DecomposerService, db=db)
 
     # --- Executor (depends on all services) ---
     executor = providers.Singleton(

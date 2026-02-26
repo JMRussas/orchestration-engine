@@ -1,7 +1,7 @@
 // Orchestration Engine - Projects API
 
 import { apiFetch, apiPost, apiPatch, apiDelete } from './client'
-import type { Project, Plan, Task } from '../types'
+import type { Project, Plan, Task, Checkpoint, CoverageReport } from '../types'
 
 export const listProjects = (status?: string) =>
   apiFetch<Project[]>(`/projects${status ? `?status=${status}` : ''}`)
@@ -35,3 +35,15 @@ export const cancelProject = (projectId: string) =>
 
 export const listTasks = (projectId: string) =>
   apiFetch<Task[]>(`/tasks/project/${projectId}`)
+
+export const fetchCoverage = (projectId: string) =>
+  apiFetch<CoverageReport>(`/projects/${projectId}/coverage`)
+
+export const fetchCheckpoints = (projectId: string, resolved = false) =>
+  apiFetch<Checkpoint[]>(`/checkpoints/project/${projectId}${resolved ? '?resolved=true' : ''}`)
+
+export const resolveCheckpoint = (checkpointId: string, action: string, guidance = '') =>
+  apiPost<Checkpoint>(`/checkpoints/${checkpointId}/resolve`, { action, guidance })
+
+export const reviewTask = (taskId: string, action: string, feedback = '') =>
+  apiPost<Task>(`/tasks/${taskId}/review`, { action, feedback })

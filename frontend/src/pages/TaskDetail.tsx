@@ -1,26 +1,38 @@
 // Orchestration Engine - Task Detail Page
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { apiFetch } from '../api/client'
+import { reviewTask } from '../api/projects'
+import { useFetch } from '../hooks/useFetch'
 import type { Task } from '../types'
 
 export default function TaskDetail() {
   const { id, taskId } = useParams<{ id: string; taskId: string }>()
-  const [task, setTask] = useState<Task | null>(null)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    if (taskId) {
-      apiFetch<Task>(`/tasks/${taskId}`)
-        .then(setTask)
-        .catch(e => setError(String(e)))
-    }
-  }, [taskId])
+  const { data: task, error, refetch } = useFetch<Task>(
+    () => apiFetch<Task>(`/tasks/${taskId}`),
+    [taskId],
+  )
+  const [feedback, setFeedback] = useState('')
+  const [actionLoading, setActionLoading] = useState('')
+  const [actionError, setActionError] = useState('')
 
   if (!id || !taskId) return <div className="text-dim">Invalid URL — missing project or task ID.</div>
   if (error) return <div className="card" style={{ borderColor: 'var(--error)' }}>Error loading task: {error}</div>
   if (!task) return <div className="text-dim">Loading...</div>
+
+  const handleReview = async (action: 'approve' | 'retry') => {
+    setActionLoading(action)
+    setActionError('')
+    try {
+      await reviewTask(taskId!, action, action === 'retry' ? feedback : '')
+      setFeedback('')
+      refetch()
+    } catch (e) {
+      setActionError(String(e))
+    }
+    setActionLoading('')
+  }
 
   return (
     <>
@@ -50,6 +62,32 @@ export default function TaskDetail() {
         </div>
       </div>
 
+      {/* Review action panel */}
+      {task.status === 'needs_review' && (
+        <div className="card mb-2" style={{ borderColor: 'var(--warning)' }}>
+          <h3>Review Required</h3>
+          <p className="text-sm text-dim mb-1">
+            This task needs your review. Approve the output or retry with feedback.
+          </p>
+          <div className="form-group">
+            <label>Feedback (for retry)</label>
+            <textarea value={feedback} onChange={e => setFeedback(e.target.value)}
+              placeholder="Describe what needs to change..." style={{ minHeight: '60px' }} />
+          </div>
+          {actionError && <div className="text-sm mb-1" style={{ color: 'var(--error)' }}>{actionError}</div>}
+          <div className="flex gap-1">
+            <button className="btn btn-primary" onClick={() => handleReview('approve')}
+              disabled={!!actionLoading}>
+              {actionLoading === 'approve' ? 'Approving...' : 'Approve'}
+            </button>
+            <button className="btn btn-secondary" onClick={() => handleReview('retry')}
+              disabled={!!actionLoading}>
+              {actionLoading === 'retry' ? 'Retrying...' : 'Retry with Feedback'}
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="card mb-2">
         <h3>Description</h3>
         <p style={{ whiteSpace: 'pre-wrap' }}>{task.description}</p>
@@ -61,6 +99,21 @@ export default function TaskDetail() {
           <div className="flex gap-1">
             {task.tools.map(t => <span key={t} className="badge">{t}</span>)}
           </div>
+        </div>
+      )}
+
+      {/* Verification status */}
+      {task.verification_status && (
+        <div className={`verification-card ${task.verification_status}`}>
+          <div className="flex-between mb-1">
+            <h3 style={{ margin: 0 }}>Verification</h3>
+            <span className={`badge ${task.verification_status}`}>
+              {task.verification_status.replace('_', ' ')}
+            </span>
+          </div>
+          {task.verification_notes && (
+            <p className="text-sm" style={{ whiteSpace: 'pre-wrap' }}>{task.verification_notes}</p>
+          )}
         </div>
       )}
 

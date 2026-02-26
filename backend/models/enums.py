@@ -31,8 +31,16 @@ class TaskStatus(str, Enum):
     QUEUED = "queued"        # Ready, waiting for worker
     RUNNING = "running"
     COMPLETED = "completed"
+    NEEDS_REVIEW = "needs_review"  # Output requires human review
     FAILED = "failed"
     CANCELLED = "cancelled"
+
+
+class VerificationResult(str, Enum):
+    PASSED = "passed"
+    GAPS_FOUND = "gaps_found"
+    HUMAN_NEEDED = "human_needed"
+    SKIPPED = "skipped"
 
 
 class ModelTier(str, Enum):

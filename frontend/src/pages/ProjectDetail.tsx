@@ -1,56 +1,86 @@
 // Orchestration Engine - Project Detail Page
 
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
-  getProject, listPlans, listTasks,
+  getProject, listPlans, listTasks, fetchCoverage, fetchCheckpoints,
   generatePlan, approvePlan, startExecution, pauseExecution, cancelProject,
+  resolveCheckpoint,
 } from '../api/projects'
 import { useSSE } from '../hooks/useSSE'
-import type { Project, Plan, Task } from '../types'
+import { useFetch } from '../hooks/useFetch'
+import type { Project, Plan, Task, Checkpoint, CoverageReport } from '../types'
+
+interface ProjectData {
+  project: Project
+  plans: Plan[]
+  tasks: Task[]
+  coverage: CoverageReport | null
+  checkpoints: Checkpoint[]
+}
 
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>()
-  const [project, setProject] = useState<Project | null>(null)
-  const [plans, setPlans] = useState<Plan[]>([])
-  const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState('')
-  const [error, setError] = useState('')
+  const [actionError, setActionError] = useState('')
+
+  const { data, error: fetchError, refetch } = useFetch<ProjectData>(
+    () => Promise.all([
+      getProject(id!),
+      listPlans(id!),
+      listTasks(id!),
+      fetchCoverage(id!).catch(() => null),
+      fetchCheckpoints(id!).catch(() => []),
+    ]).then(([project, plans, tasks, coverage, checkpoints]) => ({
+      project, plans, tasks, coverage, checkpoints,
+    })),
+    [id],
+  )
+
+  const project = data?.project ?? null
+  const plans = data?.plans ?? []
+  const tasks = data?.tasks ?? []
+  const coverage = data?.coverage ?? null
+  const checkpoints = data?.checkpoints ?? []
+  const error = actionError || fetchError
+
   const sse = useSSE(project?.status === 'executing' ? id! : null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const refresh = useCallback(async () => {
-    if (!id) return
-    try {
-      const [p, pl, t] = await Promise.all([
-        getProject(id), listPlans(id), listTasks(id),
-      ])
-      setProject(p)
-      setPlans(pl)
-      setTasks(t)
-    } catch (e) {
-      setError(String(e))
-    }
-  }, [id])
-
-  useEffect(() => { refresh() }, [refresh])
+  // Checkpoint resolve state
+  const [resolveId, setResolveId] = useState<string | null>(null)
+  const [resolveGuidance, setResolveGuidance] = useState('')
 
   // Auto-refresh on SSE events (debounced to avoid request storms)
   useEffect(() => {
     if (sse.events.length === 0) return
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => { refresh() }, 2000)
+    debounceRef.current = setTimeout(() => { refetch() }, 2000)
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
-  }, [sse.events.length, refresh])
+  }, [sse.events.length, refetch])
 
   const action = async (label: string, fn: () => Promise<unknown>) => {
     setLoading(label)
-    setError('')
+    setActionError('')
     try {
       await fn()
-      await refresh()
+      refetch()
     } catch (e) {
-      setError(String(e))
+      setActionError(String(e))
+    }
+    setLoading('')
+  }
+
+  const handleResolve = async (checkpointId: string, resolveAction: string) => {
+    setLoading(`resolve-${checkpointId}`)
+    setActionError('')
+    try {
+      await resolveCheckpoint(checkpointId, resolveAction, resolveGuidance)
+      setResolveId(null)
+      setResolveGuidance('')
+      refetch()
+    } catch (e) {
+      setActionError(String(e))
     }
     setLoading('')
   }
@@ -61,6 +91,7 @@ export default function ProjectDetail() {
 
   const latestPlan = plans[0]
   const draftPlan = plans.find(p => p.status === 'draft')
+  const unresolvedCheckpoints = checkpoints.filter(c => !c.resolved_at)
 
   return (
     <>
@@ -100,10 +131,31 @@ export default function ProjectDetail() {
 
       {error && <div className="card" style={{ borderColor: 'var(--error)' }}>{error}</div>}
 
-      {/* Requirements */}
+      {/* Requirements + Coverage */}
       <div className="card mb-2">
         <h3>Requirements</h3>
         <p style={{ whiteSpace: 'pre-wrap' }}>{project.requirements}</p>
+        {coverage && coverage.total_requirements > 0 && (
+          <div style={{ marginTop: '0.75rem' }}>
+            <div className="flex-between mb-1">
+              <span className="text-sm text-dim">Requirement Coverage</span>
+              <span className="text-sm">{coverage.covered_count}/{coverage.total_requirements}</span>
+            </div>
+            <div className="progress-bar">
+              <div className="progress-fill ok"
+                style={{ width: `${(coverage.covered_count / coverage.total_requirements) * 100}%` }} />
+            </div>
+            {coverage.uncovered_count > 0 && (
+              <div style={{ marginTop: '0.5rem' }}>
+                {coverage.requirements.filter(r => !r.covered).map(r => (
+                  <div key={r.id} className="text-sm" style={{ color: 'var(--warning)', padding: '0.125rem 0' }}>
+                    [{r.id}] {r.text}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Plan */}
@@ -120,36 +172,107 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      {/* Tasks */}
-      {tasks.length > 0 && (
-        <div className="card">
-          <h3>Tasks ({tasks.filter(t => t.status === 'completed').length}/{tasks.length})</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Task</th><th>Type</th><th>Model</th><th>Status</th><th>Cost</th><th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {tasks.map(t => (
-                <tr key={t.id}>
-                  <td>
-                    <Link to={`/project/${id}/task/${t.id}`}>{t.title}</Link>
-                    {t.depends_on.length > 0 && (
-                      <span className="text-dim text-sm"> ({t.depends_on.length} deps)</span>
-                    )}
-                  </td>
-                  <td className="text-sm">{t.task_type}</td>
-                  <td><span className={`badge ${t.model_tier}`}>{t.model_tier}</span></td>
-                  <td><span className={`badge ${t.status}`}>{t.status}</span></td>
-                  <td className="text-sm cost">{t.cost_usd > 0 ? `$${t.cost_usd.toFixed(4)}` : '—'}</td>
-                  <td className="text-sm text-dim">{t.model_used || ''}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* Checkpoints */}
+      {unresolvedCheckpoints.length > 0 && (
+        <div className="card mb-2" style={{ borderColor: 'var(--warning)' }}>
+          <h3>Checkpoints ({unresolvedCheckpoints.length} unresolved)</h3>
+          {unresolvedCheckpoints.map(cp => (
+            <div key={cp.id} className="checkpoint-item" style={{
+              padding: '0.75rem', marginBottom: '0.5rem',
+              background: 'var(--bg)', borderRadius: 'var(--radius)',
+            }}>
+              <div className="flex-between mb-1">
+                <span className="text-sm" style={{ fontWeight: 600 }}>{cp.summary}</span>
+                <span className={`badge ${cp.checkpoint_type === 'retry_exhausted' ? 'failed' : 'pending'}`}>
+                  {cp.checkpoint_type.replace('_', ' ')}
+                </span>
+              </div>
+              <p className="text-sm mb-1" style={{ color: 'var(--warning)' }}>{cp.question}</p>
+              {resolveId === cp.id ? (
+                <div>
+                  <div className="form-group">
+                    <textarea value={resolveGuidance} onChange={e => setResolveGuidance(e.target.value)}
+                      placeholder="Optional guidance..." style={{ minHeight: '50px' }} />
+                  </div>
+                  <div className="flex gap-1">
+                    <button className="btn btn-primary btn-sm" onClick={() => handleResolve(cp.id, 'retry')}
+                      disabled={!!loading}>Retry</button>
+                    <button className="btn btn-secondary btn-sm" onClick={() => handleResolve(cp.id, 'skip')}
+                      disabled={!!loading}>Skip</button>
+                    <button className="btn btn-danger btn-sm" onClick={() => handleResolve(cp.id, 'fail')}
+                      disabled={!!loading}>Fail</button>
+                    <button className="btn btn-sm" style={{ background: 'transparent', color: 'var(--text-dim)' }}
+                      onClick={() => { setResolveId(null); setResolveGuidance('') }}>Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <button className="btn btn-secondary btn-sm" onClick={() => setResolveId(cp.id)}>
+                  Resolve
+                </button>
+              )}
+            </div>
+          ))}
         </div>
       )}
+
+      {/* Tasks — grouped by wave */}
+      {tasks.length > 0 && (() => {
+        const waves = new Map<number, Task[]>()
+        for (const t of tasks) {
+          const w = t.wave ?? 0
+          if (!waves.has(w)) waves.set(w, [])
+          waves.get(w)!.push(t)
+        }
+        const sortedWaves = [...waves.entries()].sort((a, b) => a[0] - b[0])
+        const hasMultipleWaves = sortedWaves.length > 1
+
+        return (
+          <div className="card">
+            <h3>Tasks ({tasks.filter(t => t.status === 'completed').length}/{tasks.length})</h3>
+            {sortedWaves.map(([wave, waveTasks]) => {
+              const completed = waveTasks.filter(t => t.status === 'completed').length
+              const allDone = completed === waveTasks.length
+
+              return (
+                <div key={wave} className="wave-group">
+                  {hasMultipleWaves && (
+                    <div className="wave-header">
+                      <h4>Wave {wave} ({waveTasks.length} task{waveTasks.length !== 1 ? 's' : ''})</h4>
+                      <span className="wave-summary">
+                        {allDone ? 'complete' : `${completed}/${waveTasks.length} done`}
+                      </span>
+                    </div>
+                  )}
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Task</th><th>Type</th><th>Model</th><th>Status</th><th>Cost</th><th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {waveTasks.map(t => (
+                        <tr key={t.id}>
+                          <td>
+                            <Link to={`/project/${id}/task/${t.id}`}>{t.title}</Link>
+                            {t.depends_on.length > 0 && (
+                              <span className="text-dim text-sm"> ({t.depends_on.length} deps)</span>
+                            )}
+                          </td>
+                          <td className="text-sm">{t.task_type}</td>
+                          <td><span className={`badge ${t.model_tier}`}>{t.model_tier}</span></td>
+                          <td><span className={`badge ${t.status}`}>{t.status}</span></td>
+                          <td className="text-sm cost">{t.cost_usd > 0 ? `$${t.cost_usd.toFixed(4)}` : '—'}</td>
+                          <td className="text-sm text-dim">{t.model_used || ''}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            })}
+          </div>
+        )
+      })()}
 
       {/* SSE Events */}
       {sse.events.length > 0 && (

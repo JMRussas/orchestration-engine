@@ -18,9 +18,22 @@ interface SSEState {
   connected: boolean
 }
 
-export function useSSE(projectId: string | null): SSEState {
+const EVENT_TYPES = [
+  'task_start', 'task_complete', 'task_failed', 'tool_call',
+  'budget_warning', 'project_complete', 'project_failed',
+  'task_retry', 'task_verification_retry', 'task_needs_review',
+  'checkpoint', 'wave_checkpoint',
+] as const
+
+interface UseSSEOptions {
+  onEvent?: (type: string, data: SSEEvent) => void
+}
+
+export function useSSE(projectId: string | null, options?: UseSSEOptions): SSEState {
   const [state, setState] = useState<SSEState>({ events: [], connected: false })
   const sourceRef = useRef<EventSource | null>(null)
+  const onEventRef = useRef(options?.onEvent)
+  onEventRef.current = options?.onEvent
 
   useEffect(() => {
     if (!projectId) return
@@ -50,13 +63,11 @@ export function useSSE(projectId: string | null): SSEState {
               ...prev,
               events: [...prev.events.slice(-MAX_EVENTS + 1), data],
             }))
+            onEventRef.current?.(data.type, data)
           } catch { /* ignore parse errors */ }
         }
 
-        for (const type of [
-          'task_start', 'task_complete', 'task_failed', 'tool_call',
-          'budget_warning', 'project_complete', 'project_failed',
-        ]) {
+        for (const type of EVENT_TYPES) {
           source.addEventListener(type, handleEvent)
         }
 

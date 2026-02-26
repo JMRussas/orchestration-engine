@@ -86,6 +86,10 @@ tasks = Table(
     Column("max_tokens", Integer, nullable=False, server_default="4096"),
     Column("retry_count", Integer, nullable=False, server_default="0"),
     Column("max_retries", Integer, nullable=False, server_default="2"),
+    Column("wave", Integer, nullable=False, server_default="0"),
+    Column("verification_status", Text),
+    Column("verification_notes", Text),
+    Column("requirement_ids_json", Text, server_default="[]"),
     Column("error", Text),
     Column("started_at", Float),
     Column("completed_at", Float),
@@ -138,11 +142,28 @@ task_events = Table(
     Column("timestamp", Float, nullable=False),
 )
 
+checkpoints = Table(
+    "checkpoints",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("project_id", Text, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+    Column("task_id", Text, ForeignKey("tasks.id", ondelete="CASCADE")),
+    Column("checkpoint_type", Text, nullable=False),
+    Column("summary", Text, nullable=False),
+    Column("attempts_json", Text, server_default="[]"),
+    Column("question", Text, nullable=False),
+    Column("response", Text),
+    Column("resolved_at", Float),
+    Column("created_at", Float, nullable=False),
+)
+
 # Indexes
+Index("idx_checkpoints_project", checkpoints.c.project_id)
 Index("idx_plans_project", plans.c.project_id)
 Index("idx_tasks_project", tasks.c.project_id)
 Index("idx_tasks_status", tasks.c.status)
 Index("idx_tasks_priority", tasks.c.priority)
+Index("idx_tasks_wave", tasks.c.wave)
 Index("idx_deps_depends", task_deps.c.depends_on)
 Index("idx_usage_project", usage_log.c.project_id)
 Index("idx_usage_timestamp", usage_log.c.timestamp)

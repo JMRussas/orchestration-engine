@@ -11,11 +11,15 @@
 
 export type ProjectStatus = 'draft' | 'planning' | 'ready' | 'executing' | 'paused' | 'completed' | 'failed' | 'cancelled'
 export type PlanStatus = 'draft' | 'approved' | 'superseded'
-export type TaskStatus = 'pending' | 'blocked' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+export type TaskStatus = 'pending' | 'blocked' | 'queued' | 'running' | 'completed' | 'needs_review' | 'failed' | 'cancelled'
 export type ModelTier = 'haiku' | 'sonnet' | 'opus' | 'ollama'
 export type TaskType = 'code' | 'research' | 'analysis' | 'asset' | 'integration' | 'documentation'
 export type ResourceStatus = 'online' | 'offline' | 'degraded'
-export type SSEEventType = 'task_start' | 'task_complete' | 'task_failed' | 'tool_call' | 'budget_warning' | 'project_complete' | 'project_failed'
+export type SSEEventType =
+  | 'task_start' | 'task_complete' | 'task_failed' | 'tool_call'
+  | 'budget_warning' | 'project_complete' | 'project_failed'
+  | 'task_retry' | 'task_verification_retry' | 'task_needs_review'
+  | 'checkpoint' | 'wave_checkpoint'
 
 // ---------------------------------------------------------------------------
 // Models
@@ -78,7 +82,11 @@ export interface Task {
   status: TaskStatus
   model_tier: ModelTier
   model_used: string | null
+  wave: number
   tools: string[]
+  verification_status: string | null
+  verification_notes: string | null
+  requirement_ids: string[]
   prompt_tokens: number
   completion_tokens: number
   cost_usd: number
@@ -138,4 +146,31 @@ export interface SSEEvent {
   task_id: string | null
   timestamp: number
   [key: string]: unknown
+}
+
+export interface Checkpoint {
+  id: string
+  project_id: string
+  task_id: string | null
+  checkpoint_type: string
+  summary: string
+  attempts: Record<string, unknown>[]
+  question: string
+  response: string | null
+  resolved_at: number | null
+  created_at: number
+}
+
+export interface CoverageRequirement {
+  id: string
+  text: string
+  covered: boolean
+}
+
+export interface CoverageReport {
+  project_id: string
+  total_requirements: number
+  covered_count: number
+  uncovered_count: number
+  requirements: CoverageRequirement[]
 }

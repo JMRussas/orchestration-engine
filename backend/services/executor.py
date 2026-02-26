@@ -1,7 +1,8 @@
 #  Orchestration Engine - Task Executor
 #
 #  Async worker pool that executes tasks via Claude API or Ollama,
-#  with tool support, dependency resolution, and budget enforcement.
+#  with tool support, dependency resolution, budget enforcement,
+#  wave-based dispatch, and context forwarding.
 #
 #  Depends on: backend/config.py, backend/db/connection.py,
 #              services/budget.py, services/model_router.py,
@@ -14,6 +15,7 @@ import json
 import logging
 import random
 import time
+import uuid
 
 import anthropic
 import httpx
@@ -23,12 +25,18 @@ logger = logging.getLogger("orchestration.executor")
 from backend.config import (
     ANTHROPIC_API_KEY,
     API_TIMEOUT,
+    CHECKPOINT_ON_RETRY_EXHAUSTED,
+    CONTEXT_FORWARD_MAX_CHARS,
     MAX_CONCURRENT_TASKS,
     MAX_TOOL_ROUNDS,
     OLLAMA_DEFAULT_MODEL,
     OLLAMA_GENERATE_TIMEOUT,
     OLLAMA_HOSTS,
+    SHUTDOWN_GRACE_SECONDS,
+    STALE_TASK_THRESHOLD_SECONDS,
     TICK_INTERVAL,
+    VERIFICATION_ENABLED,
+    WAVE_CHECKPOINTS,
 )
 from backend.models.enums import ModelTier, ProjectStatus, TaskStatus
 from backend.services.model_router import calculate_cost, get_model_id
@@ -65,16 +73,25 @@ class Executor:
         self._retry_after: dict[str, float] = {}  # task_id → earliest retry timestamp
 
     async def start(self):
-        """Start the executor loop."""
+        """Start the executor loop. Recovers stale tasks from prior crashes."""
         if self._running:
             return
         self._running = True
         self._client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+        await self._recover_stale_tasks()
         self._task = asyncio.create_task(self._run_loop())
         logger.info("Executor started")
 
-    async def stop(self):
-        """Stop the executor loop and cancel in-flight tasks."""
+    async def stop(self, grace_seconds: float | None = None):
+        """Stop the executor loop, waiting for in-flight tasks to finish.
+
+        Args:
+            grace_seconds: How long to wait for in-flight tasks before cancelling.
+                           Defaults to SHUTDOWN_GRACE_SECONDS from config.
+        """
+        if grace_seconds is None:
+            grace_seconds = SHUTDOWN_GRACE_SECONDS
+
         self._running = False
         if self._task:
             self._task.cancel()
@@ -82,12 +99,20 @@ class Executor:
                 await self._task
             except asyncio.CancelledError:
                 pass
-        # Cancel all in-flight task executions
-        for t in list(self._in_flight):
-            t.cancel()
+
+        # Wait for in-flight tasks up to the grace period
         if self._in_flight:
-            await asyncio.gather(*self._in_flight, return_exceptions=True)
+            logger.info("Waiting up to %.0fs for %d in-flight task(s)", grace_seconds, len(self._in_flight))
+            done, pending = await asyncio.wait(
+                list(self._in_flight), timeout=grace_seconds,
+            )
+            if pending:
+                logger.warning("Grace period expired, cancelling %d task(s)", len(pending))
+                for t in pending:
+                    t.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
             self._in_flight.clear()
+
         # Close the shared Anthropic client and clear state
         if self._client:
             await self._client.close()
@@ -104,6 +129,33 @@ class Executor:
                 logger.error("Tick error: %s", e)
             await asyncio.sleep(TICK_INTERVAL)
 
+    async def _recover_stale_tasks(self):
+        """Reset tasks stuck in 'running' or 'queued' from a prior crash.
+
+        Only recovers tasks whose updated_at is older than the configured
+        stale threshold (default 5 min). Increments retry_count so the task
+        doesn't silently restart without tracking the failed attempt.
+        """
+        cutoff = time.time() - STALE_TASK_THRESHOLD_SECONDS
+        stale = await self._db.fetchall(
+            "SELECT id, title, project_id, retry_count FROM tasks "
+            "WHERE status IN (?, ?) AND updated_at < ?",
+            (TaskStatus.RUNNING, TaskStatus.QUEUED, cutoff),
+        )
+        if not stale:
+            return
+
+        now = time.time()
+        for row in stale:
+            await self._db.execute_write(
+                "UPDATE tasks SET status = ?, retry_count = retry_count + 1, "
+                "error = ?, updated_at = ? WHERE id = ?",
+                (TaskStatus.PENDING,
+                 f"Recovered from stale state (retry {row['retry_count'] + 1})",
+                 now, row["id"]),
+            )
+        logger.info("Recovered %d stale task(s) to pending", len(stale))
+
     async def _tick(self):
         """One executor tick: find ready tasks and dispatch them."""
         # Find projects that are executing
@@ -111,6 +163,10 @@ class Executor:
             "SELECT id FROM projects WHERE status = ?",
             (ProjectStatus.EXECUTING,),
         )
+
+        # Terminal statuses: tasks no longer active (done processing)
+        _TERMINAL = (TaskStatus.COMPLETED, TaskStatus.FAILED,
+                     TaskStatus.CANCELLED, TaskStatus.NEEDS_REVIEW)
 
         for project in projects:
             pid = project["id"]
@@ -127,15 +183,23 @@ class Executor:
             # Unblock tasks whose dependencies are now met
             await self._update_blocked_tasks(pid)
 
-            # Find ready tasks: pending with all deps completed (single query, no N+1)
+            # Determine the current wave (lowest wave with incomplete tasks)
+            wave_row = await self._db.fetchone(
+                "SELECT MIN(wave) as w FROM tasks "
+                "WHERE project_id = ? AND status NOT IN (?, ?, ?, ?)",
+                (pid, *_TERMINAL),
+            )
+            current_wave = wave_row["w"] if wave_row and wave_row["w"] is not None else 0
+
+            # Find ready tasks: pending with all deps completed, filtered to current wave
             ready = await self._db.fetchall(
                 "SELECT t.* FROM tasks t "
                 "LEFT JOIN task_deps d ON d.task_id = t.id "
                 "LEFT JOIN tasks dep ON dep.id = d.depends_on AND dep.status != ? "
-                "WHERE t.project_id = ? AND t.status = ? "
+                "WHERE t.project_id = ? AND t.status = ? AND t.wave = ? "
                 "GROUP BY t.id HAVING COUNT(dep.id) = 0 "
                 "ORDER BY t.priority ASC",
-                (TaskStatus.COMPLETED, pid, TaskStatus.PENDING),
+                (TaskStatus.COMPLETED, pid, TaskStatus.PENDING, current_wave),
             )
 
             for task_row in ready:
@@ -178,10 +242,35 @@ class Executor:
                 self._in_flight.add(handle)
                 handle.add_done_callback(self._in_flight.discard)
 
+            # Check for wave completion → optional checkpoint pause
+            if WAVE_CHECKPOINTS:
+                wave_remaining = await self._db.fetchone(
+                    "SELECT COUNT(*) as cnt FROM tasks "
+                    "WHERE project_id = ? AND wave = ? AND status NOT IN (?, ?, ?, ?)",
+                    (pid, current_wave, *_TERMINAL),
+                )
+                if wave_remaining and wave_remaining["cnt"] == 0:
+                    next_wave = await self._db.fetchone(
+                        "SELECT MIN(wave) as w FROM tasks "
+                        "WHERE project_id = ? AND status NOT IN (?, ?, ?, ?)",
+                        (pid, *_TERMINAL),
+                    )
+                    if next_wave and next_wave["w"] is not None:
+                        await self._db.execute_write(
+                            "UPDATE projects SET status = ?, updated_at = ? WHERE id = ?",
+                            (ProjectStatus.PAUSED, time.time(), pid),
+                        )
+                        await self._progress.push_event(
+                            pid, "wave_checkpoint",
+                            f"Wave {current_wave} complete. Resume to start wave {next_wave['w']}.",
+                            wave=current_wave, next_wave=next_wave["w"],
+                        )
+                        continue
+
             # Check if all tasks are done
             remaining = await self._db.fetchone(
-                "SELECT COUNT(*) as cnt FROM tasks WHERE project_id = ? AND status NOT IN (?, ?, ?)",
-                (pid, TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED),
+                "SELECT COUNT(*) as cnt FROM tasks WHERE project_id = ? AND status NOT IN (?, ?, ?, ?)",
+                (pid, *_TERMINAL),
             )
             if remaining and remaining["cnt"] == 0:
                 # All tasks reached a terminal state
@@ -263,6 +352,156 @@ class Executor:
 
         return True
 
+    async def _create_checkpoint(
+        self, project_id: str, task_id: str, task_row, error_msg: str,
+    ):
+        """Create a checkpoint for a task that exhausted retries.
+
+        Sets the task to NEEDS_REVIEW and creates a structured checkpoint record
+        with attempt history for the user to resolve.
+        """
+        checkpoint_id = uuid.uuid4().hex[:12]
+
+        # Gather attempt history from task_events
+        events = await self._db.fetchall(
+            "SELECT message, timestamp FROM task_events "
+            "WHERE task_id = ? AND event_type IN ('task_retry', 'task_failed') "
+            "ORDER BY timestamp",
+            (task_id,),
+        )
+        attempts = [
+            {"message": e["message"], "timestamp": e["timestamp"]}
+            for e in events
+        ]
+
+        await self._db.execute_write(
+            "INSERT INTO checkpoints "
+            "(id, project_id, task_id, checkpoint_type, summary, attempts_json, question, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                checkpoint_id, project_id, task_id, "retry_exhausted",
+                f"Task '{task_row['title']}' failed after {task_row['max_retries']} attempts",
+                json.dumps(attempts),
+                "How should we proceed? Options: retry with modified approach, "
+                "skip this task, or fail it.",
+                time.time(),
+            ),
+        )
+
+        await self._db.execute_write(
+            "UPDATE tasks SET status = ?, error = ?, updated_at = ? WHERE id = ?",
+            (TaskStatus.NEEDS_REVIEW, error_msg, time.time(), task_id),
+        )
+
+        await self._progress.push_event(
+            project_id, "checkpoint",
+            f"Checkpoint: {task_row['title']} needs attention after {task_row['max_retries']} failed attempts",
+            task_id=task_id, checkpoint_id=checkpoint_id,
+        )
+
+    async def _verify_task_output(
+        self, task_row, output_text: str, project_id: str, task_id: str,
+    ) -> bool:
+        """Run output verification. Returns True if the task status was overridden."""
+        from backend.services.verifier import verify_output
+        from backend.models.enums import VerificationResult
+
+        try:
+            verification = await verify_output(
+                task_title=task_row["title"],
+                task_description=task_row["description"],
+                output_text=output_text,
+                client=self._client,
+                budget=self._budget,
+                project_id=project_id,
+                task_id=task_id,
+            )
+        except Exception as e:
+            # Verification failure should not block task completion
+            logger.warning("Verification failed for task %s: %s", task_id, e)
+            await self._db.execute_write(
+                "UPDATE tasks SET verification_status = ?, verification_notes = ?, "
+                "updated_at = ? WHERE id = ?",
+                (VerificationResult.SKIPPED, f"Verification error: {e}",
+                 time.time(), task_id),
+            )
+            return False
+
+        v_result = verification["result"]
+        v_notes = verification["notes"]
+
+        await self._db.execute_write(
+            "UPDATE tasks SET verification_status = ?, verification_notes = ?, "
+            "updated_at = ? WHERE id = ?",
+            (v_result, v_notes, time.time(), task_id),
+        )
+
+        if v_result == VerificationResult.GAPS_FOUND:
+            retry_count = task_row["retry_count"]
+            max_retries = task_row["max_retries"]
+            if retry_count < max_retries:
+                # Auto-retry with verification feedback appended to context
+                ctx = json.loads(task_row["context_json"]) if task_row["context_json"] else []
+                ctx.append({
+                    "type": "verification_feedback",
+                    "content": f"Previous attempt had gaps: {v_notes}. Address these issues.",
+                })
+                await self._db.execute_write(
+                    "UPDATE tasks SET status = ?, context_json = ?, "
+                    "retry_count = retry_count + 1, completed_at = NULL, updated_at = ? WHERE id = ?",
+                    (TaskStatus.PENDING, json.dumps(ctx), time.time(), task_id),
+                )
+                await self._progress.push_event(
+                    project_id, "task_verification_retry",
+                    f"{task_row['title']}: gaps found, retrying with feedback",
+                    task_id=task_id, verification_notes=v_notes,
+                )
+                return True
+
+        if v_result == VerificationResult.HUMAN_NEEDED:
+            await self._db.execute_write(
+                "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
+                (TaskStatus.NEEDS_REVIEW, time.time(), task_id),
+            )
+            await self._progress.push_event(
+                project_id, "task_needs_review",
+                f"{task_row['title']}: requires human review",
+                task_id=task_id, verification_notes=v_notes,
+            )
+            return True
+
+        return False
+
+    async def _forward_context(self, completed_task, output_text: str):
+        """Inject completed task's output summary into dependent tasks' context."""
+        deps = await self._db.fetchall(
+            "SELECT task_id FROM task_deps WHERE depends_on = ?",
+            (completed_task["id"],),
+        )
+        if not deps:
+            return
+
+        # Truncate output to configured max for context injection
+        summary = (output_text or "")[:CONTEXT_FORWARD_MAX_CHARS]
+        context_entry = {
+            "type": "dependency_output",
+            "source_task_id": completed_task["id"],
+            "source_task_title": completed_task["title"],
+            "content": summary,
+        }
+
+        for dep in deps:
+            dep_task = await self._db.fetchone(
+                "SELECT context_json FROM tasks WHERE id = ?", (dep["task_id"],),
+            )
+            if dep_task:
+                ctx = json.loads(dep_task["context_json"]) if dep_task["context_json"] else []
+                ctx.append(context_entry)
+                await self._db.execute_write(
+                    "UPDATE tasks SET context_json = ?, updated_at = ? WHERE id = ?",
+                    (json.dumps(ctx), time.time(), dep["task_id"]),
+                )
+
     async def _execute_task(self, task_row, est_cost: float = 0.0):
         """Execute a single task with semaphore-controlled concurrency."""
         task_id = task_row["id"]
@@ -300,10 +539,22 @@ class Executor:
                             time.time(), time.time(), task_id,
                         ),
                     )
+
+                    # Optional output verification (skip for Ollama — free tasks)
+                    if VERIFICATION_ENABLED and tier != ModelTier.OLLAMA and self._client:
+                        verification_overridden = await self._verify_task_output(
+                            task_row, result["output"], project_id, task_id,
+                        )
+                        if verification_overridden:
+                            return  # Task was reset to PENDING or NEEDS_REVIEW
+
                     await self._progress.push_event(
                         project_id, "task_complete", task_row["title"],
                         task_id=task_id, cost_usd=result["cost_usd"],
                     )
+
+                    # Forward output to dependent tasks' context
+                    await self._forward_context(task_row, result["output"])
 
                 except _TRANSIENT_ERRORS as e:
                     retry_count = task_row["retry_count"]
@@ -328,14 +579,20 @@ class Executor:
                     else:
                         self._retry_after.pop(task_id, None)
                         error_msg = f"Max retries exceeded: {e}"
-                        await self._db.execute_write(
-                            "UPDATE tasks SET status = ?, error = ?, updated_at = ? WHERE id = ?",
-                            (TaskStatus.FAILED, error_msg, time.time(), task_id),
-                        )
-                        await self._progress.push_event(
-                            project_id, "task_failed", f"{task_row['title']}: {error_msg}",
-                            task_id=task_id,
-                        )
+
+                        if CHECKPOINT_ON_RETRY_EXHAUSTED:
+                            await self._create_checkpoint(
+                                project_id, task_id, task_row, error_msg,
+                            )
+                        else:
+                            await self._db.execute_write(
+                                "UPDATE tasks SET status = ?, error = ?, updated_at = ? WHERE id = ?",
+                                (TaskStatus.FAILED, error_msg, time.time(), task_id),
+                            )
+                            await self._progress.push_event(
+                                project_id, "task_failed", f"{task_row['title']}: {error_msg}",
+                                task_id=task_id,
+                            )
 
                 except Exception as e:
                     self._retry_after.pop(task_id, None)

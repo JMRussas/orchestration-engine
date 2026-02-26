@@ -17,7 +17,7 @@ from backend.container import Container
 from backend.db.connection import Database
 from backend.middleware.auth import get_current_user
 from backend.models.enums import TaskStatus
-from backend.models.schemas import TaskOut, TaskUpdate
+from backend.models.schemas import ReviewAction, TaskOut, TaskUpdate
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -66,6 +66,10 @@ async def _row_to_dict(row, db: Database, deps_list: list[str] | None = None) ->
         "cost_usd": row["cost_usd"],
         "output_text": row["output_text"],
         "output_artifacts": json.loads(row["output_artifacts_json"]) if row["output_artifacts_json"] else [],
+        "wave": row["wave"],
+        "verification_status": row["verification_status"],
+        "verification_notes": row["verification_notes"],
+        "requirement_ids": json.loads(row["requirement_ids_json"]) if row["requirement_ids_json"] else [],
         "error": row["error"],
         "depends_on": deps_list,
         "started_at": row["started_at"],
@@ -226,3 +230,45 @@ async def cancel_task(
 
     row = await db.fetchone("SELECT * FROM tasks WHERE id = ?", (task_id,))
     return TaskOut(**await _row_to_dict(row, db))
+
+
+@router.post("/{task_id}/review")
+@inject
+async def review_task(
+    task_id: str,
+    body: ReviewAction,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(Provide[Container.db]),
+) -> TaskOut:
+    """Respond to a task in NEEDS_REVIEW status.
+
+    Actions:
+        approve — accept the output as-is, mark task COMPLETED.
+        retry — reset to PENDING with user feedback appended to context.
+    """
+    row = await _verify_task_ownership(db, task_id, current_user)
+    if row["status"] != TaskStatus.NEEDS_REVIEW:
+        raise HTTPException(400, "Task is not in needs_review status")
+
+    if body.action == "approve":
+        await db.execute_write(
+            "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
+            (TaskStatus.COMPLETED, time.time(), task_id),
+        )
+    elif body.action == "retry":
+        ctx = json.loads(row["context_json"]) if row["context_json"] else []
+        if body.feedback:
+            ctx.append({
+                "type": "review_feedback",
+                "content": body.feedback,
+            })
+        await db.execute_write(
+            "UPDATE tasks SET status = ?, context_json = ?, "
+            "verification_status = NULL, verification_notes = NULL, "
+            "output_text = NULL, completed_at = NULL, "
+            "retry_count = retry_count + 1, updated_at = ? WHERE id = ?",
+            (TaskStatus.PENDING, json.dumps(ctx), time.time(), task_id),
+        )
+
+    updated = await db.fetchone("SELECT * FROM tasks WHERE id = ?", (task_id,))
+    return TaskOut(**await _row_to_dict(updated, db))

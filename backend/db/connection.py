@@ -81,6 +81,10 @@ CREATE TABLE IF NOT EXISTS tasks (
     max_tokens INTEGER NOT NULL DEFAULT 4096,
     retry_count INTEGER NOT NULL DEFAULT 0,
     max_retries INTEGER NOT NULL DEFAULT 2,
+    wave INTEGER NOT NULL DEFAULT 0,
+    verification_status TEXT,
+    verification_notes TEXT,
+    requirement_ids_json TEXT DEFAULT '[]',
     error TEXT,
     started_at REAL,
     completed_at REAL,
@@ -126,11 +130,26 @@ CREATE TABLE IF NOT EXISTS task_events (
     timestamp REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS checkpoints (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+    checkpoint_type TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    attempts_json TEXT DEFAULT '[]',
+    question TEXT NOT NULL,
+    response TEXT,
+    resolved_at REAL,
+    created_at REAL NOT NULL
+);
+
 -- Indexes
+CREATE INDEX IF NOT EXISTS idx_checkpoints_project ON checkpoints(project_id);
 CREATE INDEX IF NOT EXISTS idx_plans_project ON plans(project_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority);
+CREATE INDEX IF NOT EXISTS idx_tasks_wave ON tasks(wave);
 CREATE INDEX IF NOT EXISTS idx_deps_depends ON task_deps(depends_on);
 CREATE INDEX IF NOT EXISTS idx_usage_project ON usage_log(project_id);
 CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage_log(timestamp);

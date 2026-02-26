@@ -77,7 +77,11 @@ class TaskOut(BaseModel):
     status: TaskStatus
     model_tier: ModelTier
     model_used: str | None = None
+    wave: int = 0
     tools: list[str] = Field(default_factory=list)
+    verification_status: str | None = None
+    verification_notes: str | None = None
+    requirement_ids: list[str] = Field(default_factory=list)
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cost_usd: float = 0.0
@@ -97,6 +101,35 @@ class TaskUpdate(BaseModel):
     model_tier: ModelTier | None = None
     priority: int | None = Field(default=None, ge=0, le=1000)
     max_tokens: int | None = Field(default=None, ge=1, le=16384)
+
+
+class ReviewAction(BaseModel):
+    """User response to a NEEDS_REVIEW task."""
+    action: str = Field(..., pattern="^(approve|retry)$")
+    feedback: str = Field(default="", max_length=10_000)
+
+
+# ---------------------------------------------------------------------------
+# Checkpoints
+# ---------------------------------------------------------------------------
+
+class CheckpointOut(BaseModel):
+    id: str
+    project_id: str
+    task_id: str | None = None
+    checkpoint_type: str
+    summary: str
+    attempts: list[dict] = Field(default_factory=list)
+    question: str
+    response: str | None = None
+    resolved_at: float | None = None
+    created_at: float
+
+
+class CheckpointResolve(BaseModel):
+    """User response to a checkpoint."""
+    action: str = Field(..., pattern="^(retry|skip|fail)$")
+    guidance: str = Field(default="", max_length=10_000)
 
 
 # ---------------------------------------------------------------------------

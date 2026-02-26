@@ -28,7 +28,8 @@ from backend.rate_limit import limiter
 from backend.middleware.auth import get_current_user
 from backend.models.enums import PlanStatus, ProjectStatus, TaskStatus
 from backend.models.schemas import PlanOut, ProjectCreate, ProjectOut, ProjectUpdate
-from backend.services.budget import BudgetManager
+from backend.services.decomposer import DecomposerService
+from backend.services.planner import PlannerService
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -235,15 +236,13 @@ async def trigger_plan(
     project_id: str,
     current_user: dict = Depends(get_current_user),
     db: Database = Depends(Provide[Container.db]),
-    budget: BudgetManager = Depends(Provide[Container.budget]),
+    planner: PlannerService = Depends(Provide[Container.planner]),
 ):
     """Generate a plan from the project's requirements using Claude."""
     await _get_owned_project(db, project_id, current_user)
 
-    from backend.services.planner import generate_plan
-
     try:
-        result = await generate_plan(project_id, db=db, budget=budget)
+        result = await planner.generate(project_id)
     except NotFoundError as e:
         raise HTTPException(404, str(e))
     except BudgetExhaustedError as e:
@@ -294,6 +293,7 @@ async def approve_plan(
     plan_id: str,
     current_user: dict = Depends(get_current_user),
     db: Database = Depends(Provide[Container.db]),
+    decomposer: DecomposerService = Depends(Provide[Container.decomposer]),
 ):
     """Approve a plan and decompose it into executable tasks."""
     await _get_owned_project(db, project_id, current_user)
@@ -304,10 +304,8 @@ async def approve_plan(
     if row["status"] != PlanStatus.DRAFT:
         raise HTTPException(400, f"Plan is already {row['status']}")
 
-    from backend.services.decomposer import decompose_plan
-
     try:
-        result = await decompose_plan(project_id, plan_id, db=db)
+        result = await decomposer.decompose(project_id, plan_id)
     except NotFoundError as e:
         raise HTTPException(404, str(e))
     except CycleDetectedError as e:
@@ -380,3 +378,49 @@ async def cancel_project(
         (ProjectStatus.CANCELLED, now, project_id),
     )
     return {"status": "cancelled", "project_id": project_id}
+
+
+@router.get("/{project_id}/coverage")
+@inject
+async def get_coverage(
+    project_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(Provide[Container.db]),
+):
+    """Show which requirements are covered by tasks.
+
+    Parses project requirements into numbered items [R1], [R2], etc.
+    and checks which are mapped to at least one task.
+    """
+    row = await _get_owned_project(db, project_id, current_user)
+    requirements = row["requirements"] or ""
+
+    # Parse requirement lines (same numbering as planner.py)
+    req_lines = [line.strip() for line in requirements.strip().split("\n") if line.strip()]
+    all_req_ids = [f"R{i + 1}" for i in range(len(req_lines))]
+
+    # Gather requirement IDs from all tasks in this project
+    task_rows = await db.fetchall(
+        "SELECT requirement_ids_json FROM tasks WHERE project_id = ?",
+        (project_id,),
+    )
+    covered: set[str] = set()
+    for tr in task_rows:
+        ids = json.loads(tr["requirement_ids_json"]) if tr["requirement_ids_json"] else []
+        covered.update(ids)
+
+    requirements_detail = []
+    for i, req_id in enumerate(all_req_ids):
+        requirements_detail.append({
+            "id": req_id,
+            "text": req_lines[i],
+            "covered": req_id in covered,
+        })
+
+    return {
+        "project_id": project_id,
+        "total_requirements": len(all_req_ids),
+        "covered_count": sum(1 for r in requirements_detail if r["covered"]),
+        "uncovered_count": sum(1 for r in requirements_detail if not r["covered"]),
+        "requirements": requirements_detail,
+    }

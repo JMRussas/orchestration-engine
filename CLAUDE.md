@@ -47,11 +47,13 @@ docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 | `backend/middleware/auth.py` | JWT auth dependencies (Bearer, admin, SSE token) |
 | `backend/models/` | Pydantic schemas, status enums |
 | `backend/routes/auth.py` | Register, login, refresh, me endpoints |
+| `backend/routes/checkpoints.py` | Checkpoint list, get, resolve endpoints |
 | `backend/routes/` | REST endpoints (projects, tasks, usage, services, events) |
 | `backend/services/auth.py` | Password hashing, JWT encode/decode, SSE tokens, user management |
 | `backend/services/planner.py` | Claude-powered plan generation |
-| `backend/services/decomposer.py` | Plan → task rows + dependency DAG (with cycle detection) |
-| `backend/services/executor.py` | Async worker pool, tool loop |
+| `backend/services/decomposer.py` | Plan → task rows + dependency DAG (wave computation, cycle detection) |
+| `backend/services/executor.py` | Async worker pool, wave dispatch, context forwarding, verification |
+| `backend/services/verifier.py` | Post-completion output verification via Haiku |
 | `backend/services/budget.py` | Spending tracking, limit enforcement |
 | `backend/services/model_router.py` | Model tier selection, cost calculation |
 | `backend/services/resource_monitor.py` | Health checks (Ollama, ComfyUI, Claude) |
@@ -86,7 +88,12 @@ docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 - **Rate limiting**: slowapi (shared instance in `rate_limit.py`), default 60/minute, 5/minute on plan generation
 - **Exceptions**: typed hierarchy in `backend/exceptions.py` — routes map specific exceptions to HTTP status codes
 - **Validation**: Pydantic `Field` constraints on all mutable schemas (min/max length, ge/le bounds)
-- **Tests**: Backend: pytest-asyncio (auto mode), 211+ tests, 60%+ coverage. Frontend: vitest + @testing-library/react, 25+ tests
+- **Waves**: tasks decomposed into waves by dependency depth; executor dispatches one wave at a time
+- **Context forwarding**: completed task output injected into dependents' `context_json` automatically
+- **Verification**: optional post-completion check via Haiku (PASSED/GAPS_FOUND/HUMAN_NEEDED outcomes)
+- **Checkpoints**: retry-exhausted tasks create structured checkpoints for human resolution
+- **Traceability**: requirements numbered [R1], [R2], mapped to tasks; coverage endpoint shows gaps
+- **Tests**: Backend: pytest-asyncio (auto mode), 266+ tests, 60%+ coverage. Frontend: vitest + @testing-library/react, 25+ tests
 
 ## Dependencies
 
