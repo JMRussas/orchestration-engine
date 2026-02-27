@@ -46,9 +46,6 @@ async def list_services(
         states = await resource_monitor.check_all()
     else:
         states = resource_monitor.get_all()
-        if not states:
-            # No cached data yet — do initial check
-            states = await resource_monitor.check_all()
     return [
         ResourceOut(
             id=s.id,

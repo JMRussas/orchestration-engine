@@ -70,3 +70,4 @@ class ResourceStatus(str, Enum):
     ONLINE = "online"
     OFFLINE = "offline"
     DEGRADED = "degraded"    # Reachable but missing models
+    CHECKING = "checking"    # Initial state before first health check
