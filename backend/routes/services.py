@@ -6,7 +6,7 @@
 #  Used by:    app.py
 
 from dependency_injector.wiring import inject, Provide
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.container import Container
 from backend.models.schemas import ResourceOut
@@ -34,11 +34,21 @@ async def health_check():
 @router.get("")
 @inject
 async def list_services(
+    refresh: bool = Query(False, description="Force fresh health checks instead of returning cached results"),
     resource_monitor: ResourceMonitor = Depends(Provide[Container.resource_monitor]),
 ) -> list[ResourceOut]:
-    """Get health status of all resources (Ollama, ComfyUI, Claude API)."""
-    # Force a fresh check
-    states = await resource_monitor.check_all()
+    """Get health status of all resources (Ollama, ComfyUI, Claude API).
+
+    Returns cached results by default (instant). Pass ?refresh=true to force
+    live health checks against all endpoints.
+    """
+    if refresh:
+        states = await resource_monitor.check_all()
+    else:
+        states = resource_monitor.get_all()
+        if not states:
+            # No cached data yet — do initial check
+            states = await resource_monitor.check_all()
     return [
         ResourceOut(
             id=s.id,

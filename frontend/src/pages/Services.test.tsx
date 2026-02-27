@@ -16,6 +16,12 @@ beforeEach(() => {
 })
 
 describe('Services', () => {
+  it('shows loading spinner initially', () => {
+    mockListServices.mockReturnValue(new Promise(() => {}))
+    render(<Services />)
+    expect(screen.getByText('Loading services...')).toBeInTheDocument()
+  })
+
   it('shows services after load', async () => {
     mockListServices.mockResolvedValueOnce([
       { id: 's1', name: 'Ollama (local)', status: 'online', category: 'LLM', method: 'HTTP', details: {} },
@@ -34,28 +40,31 @@ describe('Services', () => {
     expect(await screen.findByText(/Failed to load services: .*Network error/)).toBeInTheDocument()
   })
 
-  it('refresh button calls API again', async () => {
+  it('refresh button calls API with refresh=true', async () => {
     mockListServices.mockResolvedValue([])
     render(<Services />)
 
     await waitFor(() => expect(mockListServices).toHaveBeenCalledTimes(1))
+    expect(mockListServices).toHaveBeenCalledWith()
 
     const user = userEvent.setup()
     await user.click(screen.getByText('Refresh'))
 
-    await waitFor(() => expect(mockListServices).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(mockListServices).toHaveBeenCalledWith(true))
   })
 
-  it('refresh button shows Checking while loading', async () => {
-    let resolve: (v: unknown[]) => void
-    mockListServices.mockImplementation(() => new Promise(r => { resolve = r as (v: unknown[]) => void }))
-
+  it('refresh button shows Checking while refreshing', async () => {
+    mockListServices.mockResolvedValueOnce([])
     render(<Services />)
-    // While loading, button shows "Checking..."
-    expect(screen.getByText('Checking...')).toBeInTheDocument()
+    await waitFor(() => expect(mockListServices).toHaveBeenCalledTimes(1))
 
-    resolve!([])
-    await waitFor(() => expect(screen.getByText('Refresh')).toBeInTheDocument())
+    // Make the refresh call hang
+    mockListServices.mockImplementation(() => new Promise(() => {}))
+
+    const user = userEvent.setup()
+    await user.click(screen.getByText('Refresh'))
+
+    expect(screen.getByText('Checking...')).toBeInTheDocument()
   })
 
   it('shows service status badge', async () => {
