@@ -100,6 +100,18 @@ docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 - **Traceability**: requirements numbered [R1], [R2], mapped to tasks; coverage endpoint shows gaps
 - **Tests**: Backend: pytest-asyncio (auto mode), 443 tests, 86% coverage (CI threshold 80%). Frontend: vitest + @testing-library/react, 135 tests. Load tests: 7 (excluded from CI via `slow` marker)
 
+## Git Workflow
+
+| Setting | Value |
+|---------|-------|
+| **workflow** | `pr` |
+| **base_branch** | `main` |
+| **branch_protection** | `yes` |
+| **ci_gate** | `required` |
+| **squash_merge** | `yes` |
+
+CI must pass (lint + tests + frontend) before the PR is ready. See `.github/workflows/ci.yml`.
+
 ## Dependencies
 
 ```
