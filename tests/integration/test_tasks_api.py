@@ -179,3 +179,122 @@ class TestRetryTaskEdgeCases:
         resp = await authed_client.post(f"/api/tasks/{task_ids[1]}/retry")
         assert resp.status_code == 400
         assert "retry limit" in resp.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Task Filtering & Sorting
+# ---------------------------------------------------------------------------
+
+async def _seed_filterable_tasks(client, db):
+    """Create a project with tasks having varied wave, model_tier, and output."""
+    resp = await client.post("/api/projects", json={
+        "name": "Filter Test", "requirements": "Test filtering",
+    })
+    project_id = resp.json()["id"]
+
+    now = time.time()
+    plan_id = "plan_filter_test"
+    await db.execute_write(
+        "INSERT INTO plans (id, project_id, version, model_used, plan_json, status, created_at) "
+        "VALUES (?, ?, 1, 'test', ?, 'approved', ?)",
+        (plan_id, project_id, json.dumps({"summary": "test", "tasks": []}), now),
+    )
+
+    tasks = [
+        ("task_f0", "Alpha Research", "Research alpha", "pending", "haiku", 0, 100),
+        ("task_f1", "Beta Code", "Code beta module", "completed", "sonnet", 0, 50),
+        ("task_f2", "Gamma Analysis", "Analyze gamma data", "failed", "ollama", 1, 75),
+        ("task_f3", "Delta Integration", "Integrate delta", "pending", "haiku", 1, 25),
+    ]
+    for tid, title, desc, status, model_tier, wave, priority in tasks:
+        await db.execute_write(
+            "INSERT INTO tasks (id, project_id, plan_id, title, description, task_type, "
+            "priority, status, model_tier, wave, output_text, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, 'code', ?, ?, ?, ?, ?, ?, ?)",
+            (tid, project_id, plan_id, title, desc, priority, status, model_tier, wave,
+             f"output for {title}" if status == "completed" else None, now, now),
+        )
+
+    return project_id
+
+
+class TestListTasksFiltering:
+    async def test_filter_by_wave(self, authed_client, tmp_db):
+        from backend.app import container
+        db = container.db()
+        pid = await _seed_filterable_tasks(authed_client, db)
+        resp = await authed_client.get(f"/api/tasks/project/{pid}?wave=0")
+        assert resp.status_code == 200
+        titles = {t["title"] for t in resp.json()}
+        assert titles == {"Alpha Research", "Beta Code"}
+
+    async def test_filter_by_model_tier(self, authed_client, tmp_db):
+        from backend.app import container
+        db = container.db()
+        pid = await _seed_filterable_tasks(authed_client, db)
+        resp = await authed_client.get(f"/api/tasks/project/{pid}?model_tier=haiku")
+        assert resp.status_code == 200
+        titles = {t["title"] for t in resp.json()}
+        assert titles == {"Alpha Research", "Delta Integration"}
+
+    async def test_search_by_title(self, authed_client, tmp_db):
+        from backend.app import container
+        db = container.db()
+        pid = await _seed_filterable_tasks(authed_client, db)
+        resp = await authed_client.get(f"/api/tasks/project/{pid}?search=Beta")
+        assert resp.status_code == 200
+        assert len(resp.json()) == 1
+        assert resp.json()[0]["title"] == "Beta Code"
+
+    async def test_search_by_description(self, authed_client, tmp_db):
+        from backend.app import container
+        db = container.db()
+        pid = await _seed_filterable_tasks(authed_client, db)
+        resp = await authed_client.get(f"/api/tasks/project/{pid}?search=gamma")
+        assert resp.status_code == 200
+        assert len(resp.json()) == 1
+        assert resp.json()[0]["title"] == "Gamma Analysis"
+
+    async def test_sort_by_wave_desc(self, authed_client, tmp_db):
+        from backend.app import container
+        db = container.db()
+        pid = await _seed_filterable_tasks(authed_client, db)
+        resp = await authed_client.get(f"/api/tasks/project/{pid}?sort=wave&sort_dir=desc")
+        assert resp.status_code == 200
+        waves = [t["wave"] for t in resp.json()]
+        assert waves == [1, 1, 0, 0]
+
+    async def test_sort_by_created_at(self, authed_client, tmp_db):
+        from backend.app import container
+        db = container.db()
+        pid = await _seed_filterable_tasks(authed_client, db)
+        resp = await authed_client.get(f"/api/tasks/project/{pid}?sort=created_at")
+        assert resp.status_code == 200
+        assert len(resp.json()) == 4
+
+    async def test_exclude_output(self, authed_client, tmp_db):
+        from backend.app import container
+        db = container.db()
+        pid = await _seed_filterable_tasks(authed_client, db)
+        resp = await authed_client.get(f"/api/tasks/project/{pid}?exclude_output=true")
+        assert resp.status_code == 200
+        for t in resp.json():
+            assert t["output_text"] is None
+
+    async def test_invalid_sort_dir_returns_422(self, authed_client, tmp_db):
+        from backend.app import container
+        db = container.db()
+        pid = await _seed_filterable_tasks(authed_client, db)
+        resp = await authed_client.get(f"/api/tasks/project/{pid}?sort_dir=invalid")
+        assert resp.status_code == 422
+
+    async def test_combined_filters(self, authed_client, tmp_db):
+        from backend.app import container
+        db = container.db()
+        pid = await _seed_filterable_tasks(authed_client, db)
+        resp = await authed_client.get(
+            f"/api/tasks/project/{pid}?status=pending&wave=1&sort=priority"
+        )
+        assert resp.status_code == 200
+        assert len(resp.json()) == 1
+        assert resp.json()[0]["title"] == "Delta Integration"

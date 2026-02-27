@@ -59,6 +59,13 @@ class TaskType(str, Enum):
     DOCUMENTATION = "documentation"
 
 
+class TaskSortField(str, Enum):
+    PRIORITY = "priority"
+    CREATED_AT = "created_at"
+    WAVE = "wave"
+    STATUS = "status"
+
+
 class ResourceStatus(str, Enum):
     ONLINE = "online"
     OFFLINE = "offline"

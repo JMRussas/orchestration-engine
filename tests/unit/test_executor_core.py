@@ -1,9 +1,10 @@
 #  Orchestration Engine - Executor Core Tests
 #
-#  Tests for _run_claude_task, _run_ollama_task, _execute_task,
+#  Tests for run_claude_task, run_ollama_task, execute_task,
 #  _resources_available, and _tick dispatch loop.
 #
-#  Depends on: backend/services/executor.py, backend/db/connection.py
+#  Depends on: backend/services/executor.py, backend/services/claude_agent.py,
+#              backend/services/ollama_agent.py, backend/services/task_lifecycle.py
 #  Used by:    pytest
 
 import asyncio
@@ -15,6 +16,9 @@ import pytest
 
 from backend.models.enums import ModelTier, ProjectStatus, TaskStatus
 from backend.services.executor import Executor
+from backend.services.claude_agent import run_claude_task
+from backend.services.ollama_agent import run_ollama_task
+from backend.services.task_lifecycle import execute_task
 
 
 # ---------------------------------------------------------------------------
@@ -149,18 +153,21 @@ async def _seed_task(db, task_id="task_001", project_id="proj_001",
 # ---------------------------------------------------------------------------
 
 class TestRunClaudeTask:
-    """Tests for Executor._run_claude_task."""
+    """Tests for run_claude_task (standalone function)."""
 
-    @patch("backend.services.executor.calculate_cost", return_value=0.001)
-    @patch("backend.services.executor.get_model_id", return_value="claude-haiku-4-5-20251001")
+    @patch("backend.services.claude_agent.calculate_cost", return_value=0.001)
+    @patch("backend.services.claude_agent.get_model_id", return_value="claude-haiku-4-5-20251001")
     async def test_simple_text_response(self, _mock_model, _mock_cost, executor_with_db):
         """A single text response returns correct output dict."""
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=_make_claude_response("Hello world"))
-        executor_with_db._client = mock_client
 
         task_row = _make_task_row()
-        result = await executor_with_db._run_claude_task(task_row, est_cost=0.01)
+        result = await run_claude_task(
+            task_row=task_row, est_cost=0.01, client=mock_client,
+            tool_registry=executor_with_db._tool_registry,
+            budget=executor_with_db._budget, progress=executor_with_db._progress,
+        )
 
         assert result["output"] == "Hello world"
         assert result["prompt_tokens"] == 100
@@ -169,12 +176,11 @@ class TestRunClaudeTask:
         assert result["model_used"] == "claude-haiku-4-5-20251001"
         mock_client.messages.create.assert_awaited_once()
 
-    @patch("backend.services.executor.calculate_cost", return_value=0.001)
-    @patch("backend.services.executor.get_model_id", return_value="claude-haiku-4-5-20251001")
+    @patch("backend.services.claude_agent.calculate_cost", return_value=0.001)
+    @patch("backend.services.claude_agent.get_model_id", return_value="claude-haiku-4-5-20251001")
     async def test_tool_use_then_text(self, _mock_model, _mock_cost, executor_with_db):
         """Tool use in first round, text in second round."""
         mock_tool = MagicMock()
-        # MagicMock.name is special — use PropertyMock to make .name return a value
         type(mock_tool).name = property(lambda self: "search_knowledge")
         mock_tool.to_claude_tool.return_value = {"name": "search_knowledge", "description": "Search", "input_schema": {}}
         mock_tool.execute = AsyncMock(return_value="Found: class Foo {}")
@@ -186,17 +192,20 @@ class TestRunClaudeTask:
 
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(side_effect=[tool_response, text_response])
-        executor_with_db._client = mock_client
 
         task_row = _make_task_row(tools_json='["search_knowledge"]')
-        result = await executor_with_db._run_claude_task(task_row, est_cost=0.01)
+        result = await run_claude_task(
+            task_row=task_row, est_cost=0.01, client=mock_client,
+            tool_registry=executor_with_db._tool_registry,
+            budget=executor_with_db._budget, progress=executor_with_db._progress,
+        )
 
         assert "Done with tools" in result["output"]
         assert mock_client.messages.create.await_count == 2
         mock_tool.execute.assert_awaited_once_with({"query": "Foo"})
 
-    @patch("backend.services.executor.calculate_cost", return_value=0.001)
-    @patch("backend.services.executor.get_model_id", return_value="claude-haiku-4-5-20251001")
+    @patch("backend.services.claude_agent.calculate_cost", return_value=0.001)
+    @patch("backend.services.claude_agent.get_model_id", return_value="claude-haiku-4-5-20251001")
     async def test_unknown_tool_returns_error(self, _mock_model, _mock_cost, executor_with_db):
         """Tool use with unknown tool name returns error string in result."""
         tool_response = _make_tool_use_response("nonexistent_tool", {"x": 1})
@@ -204,27 +213,32 @@ class TestRunClaudeTask:
 
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(side_effect=[tool_response, text_response])
-        executor_with_db._client = mock_client
 
         task_row = _make_task_row()
-        result = await executor_with_db._run_claude_task(task_row, est_cost=0.01)
+        result = await run_claude_task(
+            task_row=task_row, est_cost=0.01, client=mock_client,
+            tool_registry=executor_with_db._tool_registry,
+            budget=executor_with_db._budget, progress=executor_with_db._progress,
+        )
 
-        # The tool result fed back should contain "Unknown tool"
         second_call_args = mock_client.messages.create.call_args_list[1]
         messages = second_call_args.kwargs["messages"]
-        user_msg = messages[-1]  # Last message is user with tool results
+        user_msg = messages[-1]
         tool_result_content = user_msg["content"][0]["content"]
         assert "Unknown tool" in tool_result_content
 
     async def test_null_client_raises(self, executor_with_db):
-        """RuntimeError when _client is None."""
-        executor_with_db._client = None
+        """RuntimeError when client is None."""
         task_row = _make_task_row()
         with pytest.raises(RuntimeError, match="Executor not started"):
-            await executor_with_db._run_claude_task(task_row)
+            await run_claude_task(
+                task_row=task_row, client=None,
+                tool_registry=executor_with_db._tool_registry,
+                budget=executor_with_db._budget, progress=executor_with_db._progress,
+            )
 
-    @patch("backend.services.executor.calculate_cost", return_value=0.5)
-    @patch("backend.services.executor.get_model_id", return_value="claude-haiku-4-5-20251001")
+    @patch("backend.services.claude_agent.calculate_cost", return_value=0.5)
+    @patch("backend.services.claude_agent.get_model_id", return_value="claude-haiku-4-5-20251001")
     async def test_budget_exhausted_mid_loop(self, _mock_model, _mock_cost, executor_with_db):
         """When budget exhausted mid-loop, breaks with partial result."""
         executor_with_db._budget.can_spend = AsyncMock(return_value=False)
@@ -232,32 +246,36 @@ class TestRunClaudeTask:
         tool_response = _make_tool_use_response("some_tool", {})
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=tool_response)
-        executor_with_db._client = mock_client
 
         task_row = _make_task_row()
-        # est_cost=0.01 but actual cost=0.5, so total_cost > est_cost triggers check
-        result = await executor_with_db._run_claude_task(task_row, est_cost=0.01)
+        result = await run_claude_task(
+            task_row=task_row, est_cost=0.01, client=mock_client,
+            tool_registry=executor_with_db._tool_registry,
+            budget=executor_with_db._budget, progress=executor_with_db._progress,
+        )
 
-        # Should have only 1 API call (breaks after first round)
         assert mock_client.messages.create.await_count == 1
 
-    @patch("backend.services.executor.calculate_cost", return_value=0.001)
-    @patch("backend.services.executor.get_model_id", return_value="claude-haiku-4-5-20251001")
+    @patch("backend.services.claude_agent.calculate_cost", return_value=0.001)
+    @patch("backend.services.claude_agent.get_model_id", return_value="claude-haiku-4-5-20251001")
     async def test_context_injected_into_system_prompt(self, _mock_model, _mock_cost, executor_with_db):
         """Context from context_json appears in the system prompt."""
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=_make_claude_response("Done"))
-        executor_with_db._client = mock_client
 
         ctx = [{"type": "dependency_output", "content": "Previous task output: foo bar"}]
         task_row = _make_task_row(context_json=json.dumps(ctx))
-        await executor_with_db._run_claude_task(task_row, est_cost=0.01)
+        await run_claude_task(
+            task_row=task_row, est_cost=0.01, client=mock_client,
+            tool_registry=executor_with_db._tool_registry,
+            budget=executor_with_db._budget, progress=executor_with_db._progress,
+        )
 
         call_kwargs = mock_client.messages.create.call_args.kwargs
         assert "Previous task output: foo bar" in call_kwargs["system"]
 
-    @patch("backend.services.executor.calculate_cost", return_value=0.001)
-    @patch("backend.services.executor.get_model_id", return_value="claude-haiku-4-5-20251001")
+    @patch("backend.services.claude_agent.calculate_cost", return_value=0.001)
+    @patch("backend.services.claude_agent.get_model_id", return_value="claude-haiku-4-5-20251001")
     async def test_multi_round_token_accumulation(self, _mock_model, _mock_cost, executor_with_db):
         """Tokens from multiple rounds accumulate correctly."""
         tool_response = _make_tool_use_response("t", {}, pt=80, ct=40)
@@ -265,7 +283,6 @@ class TestRunClaudeTask:
 
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(side_effect=[tool_response, text_response])
-        executor_with_db._client = mock_client
 
         mock_tool = MagicMock()
         type(mock_tool).name = property(lambda self: "t")
@@ -274,10 +291,14 @@ class TestRunClaudeTask:
         executor_with_db._tool_registry.get_many = MagicMock(return_value=[mock_tool])
 
         task_row = _make_task_row(tools_json='["t"]')
-        result = await executor_with_db._run_claude_task(task_row, est_cost=0.01)
+        result = await run_claude_task(
+            task_row=task_row, est_cost=0.01, client=mock_client,
+            tool_registry=executor_with_db._tool_registry,
+            budget=executor_with_db._budget, progress=executor_with_db._progress,
+        )
 
-        assert result["prompt_tokens"] == 200   # 80 + 120
-        assert result["completion_tokens"] == 100  # 40 + 60
+        assert result["prompt_tokens"] == 200
+        assert result["completion_tokens"] == 100
 
 
 # ---------------------------------------------------------------------------
@@ -285,10 +306,10 @@ class TestRunClaudeTask:
 # ---------------------------------------------------------------------------
 
 class TestRunOllamaTask:
-    """Tests for Executor._run_ollama_task."""
+    """Tests for run_ollama_task (standalone function)."""
 
-    @patch("backend.services.executor.OLLAMA_HOSTS", {"local": "http://localhost:11434"})
-    @patch("backend.services.executor.OLLAMA_DEFAULT_MODEL", "qwen2.5-coder:14b")
+    @patch("backend.services.ollama_agent.OLLAMA_HOSTS", {"local": "http://localhost:11434"})
+    @patch("backend.services.ollama_agent.OLLAMA_DEFAULT_MODEL", "qwen2.5-coder:14b")
     async def test_success_with_shared_client(self, executor_with_db):
         """Uses shared http client when available."""
         mock_resp = MagicMock()
@@ -297,10 +318,11 @@ class TestRunOllamaTask:
 
         mock_http = AsyncMock()
         mock_http.post = AsyncMock(return_value=mock_resp)
-        executor_with_db._http = mock_http
 
         task_row = _make_task_row(model_tier="ollama")
-        result = await executor_with_db._run_ollama_task(task_row)
+        result = await run_ollama_task(
+            task_row=task_row, http_client=mock_http, budget=executor_with_db._budget,
+        )
 
         assert result["output"] == "Ollama output"
         assert result["cost_usd"] == 0.0
@@ -308,13 +330,11 @@ class TestRunOllamaTask:
         assert result["completion_tokens"] == 20
         mock_http.post.assert_awaited_once()
 
-    @patch("backend.services.executor.OLLAMA_HOSTS", {"local": "http://localhost:11434"})
-    @patch("backend.services.executor.OLLAMA_DEFAULT_MODEL", "qwen2.5-coder:14b")
-    @patch("backend.services.executor.OLLAMA_GENERATE_TIMEOUT", 30)
+    @patch("backend.services.ollama_agent.OLLAMA_HOSTS", {"local": "http://localhost:11434"})
+    @patch("backend.services.ollama_agent.OLLAMA_DEFAULT_MODEL", "qwen2.5-coder:14b")
+    @patch("backend.services.ollama_agent.OLLAMA_GENERATE_TIMEOUT", 30)
     async def test_success_without_shared_client(self, executor_with_db):
         """Creates ephemeral client when no shared client available."""
-        executor_with_db._http = None
-
         mock_resp = MagicMock()
         mock_resp.json.return_value = {"response": "Ephemeral output", "prompt_eval_count": 5, "eval_count": 10}
         mock_resp.raise_for_status = MagicMock()
@@ -323,15 +343,17 @@ class TestRunOllamaTask:
         mock_client.post = AsyncMock(return_value=mock_resp)
         mock_client.aclose = AsyncMock()
 
-        with patch("backend.services.executor.httpx.AsyncClient", return_value=mock_client):
+        with patch("backend.services.ollama_agent.httpx.AsyncClient", return_value=mock_client):
             task_row = _make_task_row(model_tier="ollama")
-            result = await executor_with_db._run_ollama_task(task_row)
+            result = await run_ollama_task(
+                task_row=task_row, http_client=None, budget=executor_with_db._budget,
+            )
 
         assert result["output"] == "Ephemeral output"
         mock_client.aclose.assert_awaited_once()
 
-    @patch("backend.services.executor.OLLAMA_HOSTS", {"local": "http://localhost:11434"})
-    @patch("backend.services.executor.OLLAMA_DEFAULT_MODEL", "qwen2.5-coder:14b")
+    @patch("backend.services.ollama_agent.OLLAMA_HOSTS", {"local": "http://localhost:11434"})
+    @patch("backend.services.ollama_agent.OLLAMA_DEFAULT_MODEL", "qwen2.5-coder:14b")
     async def test_http_error_propagates(self, executor_with_db):
         """HTTP errors from raise_for_status propagate."""
         import httpx
@@ -342,14 +364,15 @@ class TestRunOllamaTask:
 
         mock_http = AsyncMock()
         mock_http.post = AsyncMock(return_value=mock_resp)
-        executor_with_db._http = mock_http
 
         task_row = _make_task_row(model_tier="ollama")
         with pytest.raises(httpx.HTTPStatusError):
-            await executor_with_db._run_ollama_task(task_row)
+            await run_ollama_task(
+                task_row=task_row, http_client=mock_http, budget=executor_with_db._budget,
+            )
 
-    @patch("backend.services.executor.OLLAMA_HOSTS", {"local": "http://localhost:11434"})
-    @patch("backend.services.executor.OLLAMA_DEFAULT_MODEL", "qwen2.5-coder:14b")
+    @patch("backend.services.ollama_agent.OLLAMA_HOSTS", {"local": "http://localhost:11434"})
+    @patch("backend.services.ollama_agent.OLLAMA_DEFAULT_MODEL", "qwen2.5-coder:14b")
     async def test_record_spend_called(self, executor_with_db):
         """Budget record_spend called with provider=ollama, cost=0."""
         mock_resp = MagicMock()
@@ -358,18 +381,19 @@ class TestRunOllamaTask:
 
         mock_http = AsyncMock()
         mock_http.post = AsyncMock(return_value=mock_resp)
-        executor_with_db._http = mock_http
 
         task_row = _make_task_row(model_tier="ollama")
-        await executor_with_db._run_ollama_task(task_row)
+        await run_ollama_task(
+            task_row=task_row, http_client=mock_http, budget=executor_with_db._budget,
+        )
 
         executor_with_db._budget.record_spend.assert_awaited_once()
         call_kwargs = executor_with_db._budget.record_spend.call_args.kwargs
         assert call_kwargs["cost_usd"] == 0.0
         assert call_kwargs["provider"] == "ollama"
 
-    @patch("backend.services.executor.OLLAMA_HOSTS", {"local": "http://localhost:11434"})
-    @patch("backend.services.executor.OLLAMA_DEFAULT_MODEL", "qwen2.5-coder:14b")
+    @patch("backend.services.ollama_agent.OLLAMA_HOSTS", {"local": "http://localhost:11434"})
+    @patch("backend.services.ollama_agent.OLLAMA_DEFAULT_MODEL", "qwen2.5-coder:14b")
     async def test_context_in_system_prompt(self, executor_with_db):
         """Context from context_json included in Ollama system prompt."""
         mock_resp = MagicMock()
@@ -378,11 +402,12 @@ class TestRunOllamaTask:
 
         mock_http = AsyncMock()
         mock_http.post = AsyncMock(return_value=mock_resp)
-        executor_with_db._http = mock_http
 
         ctx = [{"type": "dependency_output", "content": "Previous: xyz"}]
         task_row = _make_task_row(model_tier="ollama", context_json=json.dumps(ctx))
-        await executor_with_db._run_ollama_task(task_row)
+        await run_ollama_task(
+            task_row=task_row, http_client=mock_http, budget=executor_with_db._budget,
+        )
 
         call_kwargs = mock_http.post.call_args.kwargs
         body = call_kwargs["json"]
@@ -394,48 +419,62 @@ class TestRunOllamaTask:
 # ---------------------------------------------------------------------------
 
 class TestExecuteTask:
-    """Tests for Executor._execute_task (full task lifecycle)."""
+    """Tests for execute_task (standalone function)."""
 
-    @patch("backend.services.executor.VERIFICATION_ENABLED", False)
-    @patch("backend.services.executor.calculate_cost", return_value=0.001)
-    @patch("backend.services.executor.get_model_id", return_value="claude-haiku-4-5-20251001")
+    @patch("backend.services.task_lifecycle.VERIFICATION_ENABLED", False)
+    @patch("backend.services.claude_agent.calculate_cost", return_value=0.001)
+    @patch("backend.services.claude_agent.get_model_id", return_value="claude-haiku-4-5-20251001")
     async def test_success_marks_completed(self, _mock_model, _mock_cost, tmp_db, executor_with_db):
         """Successful execution sets task status to completed."""
         await _seed_task(tmp_db)
 
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=_make_claude_response("All done"))
-        executor_with_db._client = mock_client
 
         task_row = await tmp_db.fetchone("SELECT * FROM tasks WHERE id = ?", ("task_001",))
-        await executor_with_db._execute_task(task_row, est_cost=0.01)
+        await execute_task(
+            task_row=task_row, est_cost=0.01, db=tmp_db,
+            budget=executor_with_db._budget, progress=executor_with_db._progress,
+            tool_registry=executor_with_db._tool_registry,
+            http_client=None, client=mock_client,
+            semaphore=executor_with_db._semaphore,
+            dispatched=executor_with_db._dispatched,
+            retry_after=executor_with_db._retry_after,
+        )
 
         row = await tmp_db.fetchone("SELECT status, output_text FROM tasks WHERE id = ?", ("task_001",))
         assert row["status"] == TaskStatus.COMPLETED
         assert row["output_text"] == "All done"
 
-    @patch("backend.services.executor.VERIFICATION_ENABLED", False)
-    @patch("backend.services.executor.calculate_cost", return_value=0.001)
-    @patch("backend.services.executor.get_model_id", return_value="claude-haiku-4-5-20251001")
+    @patch("backend.services.task_lifecycle.VERIFICATION_ENABLED", False)
+    @patch("backend.services.claude_agent.calculate_cost", return_value=0.001)
+    @patch("backend.services.claude_agent.get_model_id", return_value="claude-haiku-4-5-20251001")
     async def test_fires_progress_events(self, _mock_model, _mock_cost, tmp_db, executor_with_db):
         """Progress events fired for task_start and task_complete."""
         await _seed_task(tmp_db)
 
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=_make_claude_response("Done"))
-        executor_with_db._client = mock_client
 
         task_row = await tmp_db.fetchone("SELECT * FROM tasks WHERE id = ?", ("task_001",))
-        await executor_with_db._execute_task(task_row, est_cost=0.01)
+        await execute_task(
+            task_row=task_row, est_cost=0.01, db=tmp_db,
+            budget=executor_with_db._budget, progress=executor_with_db._progress,
+            tool_registry=executor_with_db._tool_registry,
+            http_client=None, client=mock_client,
+            semaphore=executor_with_db._semaphore,
+            dispatched=executor_with_db._dispatched,
+            retry_after=executor_with_db._retry_after,
+        )
 
         event_types = [call.args[1] for call in executor_with_db._progress.push_event.call_args_list]
         assert "task_start" in event_types
         assert "task_complete" in event_types
 
-    @patch("backend.services.executor.VERIFICATION_ENABLED", False)
-    @patch("backend.services.executor.CHECKPOINT_ON_RETRY_EXHAUSTED", False)
-    @patch("backend.services.executor.calculate_cost", return_value=0.001)
-    @patch("backend.services.executor.get_model_id", return_value="claude-haiku-4-5-20251001")
+    @patch("backend.services.task_lifecycle.VERIFICATION_ENABLED", False)
+    @patch("backend.services.task_lifecycle.CHECKPOINT_ON_RETRY_EXHAUSTED", False)
+    @patch("backend.services.claude_agent.calculate_cost", return_value=0.001)
+    @patch("backend.services.claude_agent.get_model_id", return_value="claude-haiku-4-5-20251001")
     async def test_transient_error_retries(self, _mock_model, _mock_cost, tmp_db, executor_with_db):
         """Transient error with retries remaining sets task back to pending."""
         import anthropic as anth
@@ -452,21 +491,28 @@ class TestExecuteTask:
                 body=None,
             )
         )
-        executor_with_db._client = mock_client
 
         task_row = await tmp_db.fetchone("SELECT * FROM tasks WHERE id = ?", ("task_001",))
-        await executor_with_db._execute_task(task_row, est_cost=0.01)
+        await execute_task(
+            task_row=task_row, est_cost=0.01, db=tmp_db,
+            budget=executor_with_db._budget, progress=executor_with_db._progress,
+            tool_registry=executor_with_db._tool_registry,
+            http_client=None, client=mock_client,
+            semaphore=executor_with_db._semaphore,
+            dispatched=executor_with_db._dispatched,
+            retry_after=executor_with_db._retry_after,
+        )
 
         row = await tmp_db.fetchone("SELECT status, retry_count, error FROM tasks WHERE id = ?", ("task_001",))
         assert row["status"] == TaskStatus.PENDING
-        assert row["retry_count"] == 2  # Was 1, incremented
+        assert row["retry_count"] == 2
         assert "Transient error" in row["error"]
         assert "task_001" in executor_with_db._retry_after
 
-    @patch("backend.services.executor.VERIFICATION_ENABLED", False)
-    @patch("backend.services.executor.CHECKPOINT_ON_RETRY_EXHAUSTED", True)
-    @patch("backend.services.executor.calculate_cost", return_value=0.001)
-    @patch("backend.services.executor.get_model_id", return_value="claude-haiku-4-5-20251001")
+    @patch("backend.services.task_lifecycle.VERIFICATION_ENABLED", False)
+    @patch("backend.services.task_lifecycle.CHECKPOINT_ON_RETRY_EXHAUSTED", True)
+    @patch("backend.services.claude_agent.calculate_cost", return_value=0.001)
+    @patch("backend.services.claude_agent.get_model_id", return_value="claude-haiku-4-5-20251001")
     async def test_max_retries_creates_checkpoint(self, _mock_model, _mock_cost, tmp_db, executor_with_db):
         """Max retries with checkpoint enabled creates checkpoint and sets NEEDS_REVIEW."""
         import anthropic as anth
@@ -483,10 +529,17 @@ class TestExecuteTask:
                 body=None,
             )
         )
-        executor_with_db._client = mock_client
 
         task_row = await tmp_db.fetchone("SELECT * FROM tasks WHERE id = ?", ("task_001",))
-        await executor_with_db._execute_task(task_row, est_cost=0.01)
+        await execute_task(
+            task_row=task_row, est_cost=0.01, db=tmp_db,
+            budget=executor_with_db._budget, progress=executor_with_db._progress,
+            tool_registry=executor_with_db._tool_registry,
+            http_client=None, client=mock_client,
+            semaphore=executor_with_db._semaphore,
+            dispatched=executor_with_db._dispatched,
+            retry_after=executor_with_db._retry_after,
+        )
 
         row = await tmp_db.fetchone("SELECT status FROM tasks WHERE id = ?", ("task_001",))
         assert row["status"] == TaskStatus.NEEDS_REVIEW
@@ -495,10 +548,10 @@ class TestExecuteTask:
         assert cp is not None
         assert cp["checkpoint_type"] == "retry_exhausted"
 
-    @patch("backend.services.executor.VERIFICATION_ENABLED", False)
-    @patch("backend.services.executor.CHECKPOINT_ON_RETRY_EXHAUSTED", False)
-    @patch("backend.services.executor.calculate_cost", return_value=0.001)
-    @patch("backend.services.executor.get_model_id", return_value="claude-haiku-4-5-20251001")
+    @patch("backend.services.task_lifecycle.VERIFICATION_ENABLED", False)
+    @patch("backend.services.task_lifecycle.CHECKPOINT_ON_RETRY_EXHAUSTED", False)
+    @patch("backend.services.claude_agent.calculate_cost", return_value=0.001)
+    @patch("backend.services.claude_agent.get_model_id", return_value="claude-haiku-4-5-20251001")
     async def test_max_retries_no_checkpoint(self, _mock_model, _mock_cost, tmp_db, executor_with_db):
         """Max retries without checkpoint creates no checkpoint, marks FAILED."""
         import anthropic as anth
@@ -515,10 +568,17 @@ class TestExecuteTask:
                 body=None,
             )
         )
-        executor_with_db._client = mock_client
 
         task_row = await tmp_db.fetchone("SELECT * FROM tasks WHERE id = ?", ("task_001",))
-        await executor_with_db._execute_task(task_row, est_cost=0.01)
+        await execute_task(
+            task_row=task_row, est_cost=0.01, db=tmp_db,
+            budget=executor_with_db._budget, progress=executor_with_db._progress,
+            tool_registry=executor_with_db._tool_registry,
+            http_client=None, client=mock_client,
+            semaphore=executor_with_db._semaphore,
+            dispatched=executor_with_db._dispatched,
+            retry_after=executor_with_db._retry_after,
+        )
 
         row = await tmp_db.fetchone("SELECT status FROM tasks WHERE id = ?", ("task_001",))
         assert row["status"] == TaskStatus.FAILED
@@ -526,71 +586,99 @@ class TestExecuteTask:
         cp = await tmp_db.fetchone("SELECT * FROM checkpoints WHERE task_id = ?", ("task_001",))
         assert cp is None
 
-    @patch("backend.services.executor.VERIFICATION_ENABLED", False)
-    @patch("backend.services.executor.calculate_cost", return_value=0.001)
-    @patch("backend.services.executor.get_model_id", return_value="claude-haiku-4-5-20251001")
+    @patch("backend.services.task_lifecycle.VERIFICATION_ENABLED", False)
+    @patch("backend.services.claude_agent.calculate_cost", return_value=0.001)
+    @patch("backend.services.claude_agent.get_model_id", return_value="claude-haiku-4-5-20251001")
     async def test_generic_exception_marks_failed(self, _mock_model, _mock_cost, tmp_db, executor_with_db):
         """Non-transient exception marks task as failed."""
         await _seed_task(tmp_db)
 
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(side_effect=ValueError("Something broke"))
-        executor_with_db._client = mock_client
 
         task_row = await tmp_db.fetchone("SELECT * FROM tasks WHERE id = ?", ("task_001",))
-        await executor_with_db._execute_task(task_row, est_cost=0.01)
+        await execute_task(
+            task_row=task_row, est_cost=0.01, db=tmp_db,
+            budget=executor_with_db._budget, progress=executor_with_db._progress,
+            tool_registry=executor_with_db._tool_registry,
+            http_client=None, client=mock_client,
+            semaphore=executor_with_db._semaphore,
+            dispatched=executor_with_db._dispatched,
+            retry_after=executor_with_db._retry_after,
+        )
 
         row = await tmp_db.fetchone("SELECT status, error FROM tasks WHERE id = ?", ("task_001",))
         assert row["status"] == TaskStatus.FAILED
         assert "Something broke" in row["error"]
 
-    @patch("backend.services.executor.VERIFICATION_ENABLED", False)
-    @patch("backend.services.executor.calculate_cost", return_value=0.001)
-    @patch("backend.services.executor.get_model_id", return_value="claude-haiku-4-5-20251001")
+    @patch("backend.services.task_lifecycle.VERIFICATION_ENABLED", False)
+    @patch("backend.services.claude_agent.calculate_cost", return_value=0.001)
+    @patch("backend.services.claude_agent.get_model_id", return_value="claude-haiku-4-5-20251001")
     async def test_budget_reservation_released_on_success(self, _mock_model, _mock_cost, tmp_db, executor_with_db):
         """Budget reservation released in finally block on success."""
         await _seed_task(tmp_db)
 
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=_make_claude_response("Done"))
-        executor_with_db._client = mock_client
 
         task_row = await tmp_db.fetchone("SELECT * FROM tasks WHERE id = ?", ("task_001",))
-        await executor_with_db._execute_task(task_row, est_cost=0.05)
+        await execute_task(
+            task_row=task_row, est_cost=0.05, db=tmp_db,
+            budget=executor_with_db._budget, progress=executor_with_db._progress,
+            tool_registry=executor_with_db._tool_registry,
+            http_client=None, client=mock_client,
+            semaphore=executor_with_db._semaphore,
+            dispatched=executor_with_db._dispatched,
+            retry_after=executor_with_db._retry_after,
+        )
 
         executor_with_db._budget.release_reservation.assert_awaited_once_with(0.05)
 
-    @patch("backend.services.executor.VERIFICATION_ENABLED", False)
-    @patch("backend.services.executor.calculate_cost", return_value=0.001)
-    @patch("backend.services.executor.get_model_id", return_value="claude-haiku-4-5-20251001")
+    @patch("backend.services.task_lifecycle.VERIFICATION_ENABLED", False)
+    @patch("backend.services.claude_agent.calculate_cost", return_value=0.001)
+    @patch("backend.services.claude_agent.get_model_id", return_value="claude-haiku-4-5-20251001")
     async def test_budget_reservation_released_on_failure(self, _mock_model, _mock_cost, tmp_db, executor_with_db):
         """Budget reservation released even when task fails."""
         await _seed_task(tmp_db)
 
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(side_effect=ValueError("boom"))
-        executor_with_db._client = mock_client
 
         task_row = await tmp_db.fetchone("SELECT * FROM tasks WHERE id = ?", ("task_001",))
-        await executor_with_db._execute_task(task_row, est_cost=0.05)
+        await execute_task(
+            task_row=task_row, est_cost=0.05, db=tmp_db,
+            budget=executor_with_db._budget, progress=executor_with_db._progress,
+            tool_registry=executor_with_db._tool_registry,
+            http_client=None, client=mock_client,
+            semaphore=executor_with_db._semaphore,
+            dispatched=executor_with_db._dispatched,
+            retry_after=executor_with_db._retry_after,
+        )
 
         executor_with_db._budget.release_reservation.assert_awaited_once_with(0.05)
 
-    @patch("backend.services.executor.VERIFICATION_ENABLED", False)
-    @patch("backend.services.executor.calculate_cost", return_value=0.001)
-    @patch("backend.services.executor.get_model_id", return_value="claude-haiku-4-5-20251001")
+    @patch("backend.services.task_lifecycle.VERIFICATION_ENABLED", False)
+    @patch("backend.services.claude_agent.calculate_cost", return_value=0.001)
+    @patch("backend.services.claude_agent.get_model_id", return_value="claude-haiku-4-5-20251001")
     async def test_dispatched_cleared_after_execution(self, _mock_model, _mock_cost, tmp_db, executor_with_db):
-        """Task ID removed from _dispatched set after execution."""
+        """Task ID removed from dispatched set after execution."""
         await _seed_task(tmp_db)
 
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=_make_claude_response("Done"))
-        executor_with_db._client = mock_client
 
         executor_with_db._dispatched.add("task_001")
 
         task_row = await tmp_db.fetchone("SELECT * FROM tasks WHERE id = ?", ("task_001",))
-        await executor_with_db._execute_task(task_row, est_cost=0.0)
+        await execute_task(
+            task_row=task_row, est_cost=0.0, db=tmp_db,
+            budget=executor_with_db._budget, progress=executor_with_db._progress,
+            tool_registry=executor_with_db._tool_registry,
+            http_client=None, client=mock_client,
+            semaphore=executor_with_db._semaphore,
+            dispatched=executor_with_db._dispatched,
+            retry_after=executor_with_db._retry_after,
+        )
 
         assert "task_001" not in executor_with_db._dispatched
 
@@ -633,7 +721,6 @@ class TestResourcesAvailable:
 
     def test_lookup_type_ok_without_ollama(self, executor_with_db):
         def is_available(name):
-            # anthropic is online but ollama is offline
             return name != "ollama_local"
         executor_with_db._resource_monitor.is_available = MagicMock(side_effect=is_available)
         task_row = _make_task_row(model_tier="haiku", tools_json='["lookup_type"]')
@@ -647,11 +734,13 @@ class TestResourcesAvailable:
 class TestTickDispatch:
     """Tests for Executor._tick dispatch logic."""
 
-    @patch("backend.services.executor.VERIFICATION_ENABLED", False)
+    @patch("backend.services.task_lifecycle.VERIFICATION_ENABLED", False)
     @patch("backend.services.executor.WAVE_CHECKPOINTS", False)
     @patch("backend.services.executor.calculate_cost", return_value=0.001)
     @patch("backend.services.executor.get_model_id", return_value="claude-haiku-4-5-20251001")
-    async def test_dispatches_pending_task(self, _mock_model, _mock_cost, tmp_db, executor_with_db):
+    @patch("backend.services.claude_agent.calculate_cost", return_value=0.001)
+    @patch("backend.services.claude_agent.get_model_id", return_value="claude-haiku-4-5-20251001")
+    async def test_dispatches_pending_task(self, _m1, _m2, _mock_model, _mock_cost, tmp_db, executor_with_db):
         """Tick dispatches a pending wave-0 task."""
         await _seed_task(tmp_db, status="pending")
 
@@ -693,8 +782,6 @@ class TestTickDispatch:
     @patch("backend.services.executor.WAVE_CHECKPOINTS", False)
     async def test_all_blocked_fails_project(self, tmp_db, executor_with_db):
         """Tick fails project when all remaining tasks are blocked (dead project)."""
-        # Create a failed task and a blocked task that depends on it.
-        # _update_blocked_tasks won't unblock because the dependency is failed, not completed.
         await _seed_task(tmp_db, task_id="task_dep", status="failed")
         await _seed_task(tmp_db, task_id="task_blocked", status="blocked")
         await tmp_db.execute_write(

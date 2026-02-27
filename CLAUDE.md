@@ -48,11 +48,16 @@ docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 | `backend/models/` | Pydantic schemas, status enums |
 | `backend/routes/auth.py` | Register, login, refresh, me endpoints |
 | `backend/routes/checkpoints.py` | Checkpoint list, get, resolve endpoints |
+| `backend/routes/admin.py` | Admin-only user management, system stats |
+| `backend/routes/rag.py` | Read-only RAG database inspection endpoints |
 | `backend/routes/` | REST endpoints (projects, tasks, usage, services, events) |
 | `backend/services/auth.py` | Password hashing, JWT encode/decode, SSE tokens, user management |
 | `backend/services/planner.py` | Claude-powered plan generation |
 | `backend/services/decomposer.py` | Plan → task rows + dependency DAG (wave computation, cycle detection) |
-| `backend/services/executor.py` | Async worker pool, wave dispatch, context forwarding, verification |
+| `backend/services/executor.py` | Async worker pool, wave dispatch, recovery, tick loop |
+| `backend/services/task_lifecycle.py` | Task execution, verification, checkpoints, context forwarding |
+| `backend/services/claude_agent.py` | Claude API task runner with multi-turn tool support |
+| `backend/services/ollama_agent.py` | Ollama task runner |
 | `backend/services/verifier.py` | Post-completion output verification via Haiku |
 | `backend/services/budget.py` | Spending tracking, limit enforcement |
 | `backend/services/model_router.py` | Model tier selection, cost calculation |
@@ -93,7 +98,7 @@ docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 - **Verification**: optional post-completion check via Haiku (PASSED/GAPS_FOUND/HUMAN_NEEDED outcomes)
 - **Checkpoints**: retry-exhausted tasks create structured checkpoints for human resolution
 - **Traceability**: requirements numbered [R1], [R2], mapped to tasks; coverage endpoint shows gaps
-- **Tests**: Backend: pytest-asyncio (auto mode), 390+ tests, 85% coverage (CI threshold 80%). Frontend: vitest + @testing-library/react, 118 tests
+- **Tests**: Backend: pytest-asyncio (auto mode), 443 tests, 86% coverage (CI threshold 80%). Frontend: vitest + @testing-library/react, 135 tests. Load tests: 7 (excluded from CI via `slow` marker)
 
 ## Dependencies
 

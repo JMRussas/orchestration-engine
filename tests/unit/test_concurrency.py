@@ -4,8 +4,8 @@
 #  Covers retry backoff, RAG index cache, error recovery,
 #  async I/O, budget mid-loop check, and httpx client reuse.
 #
-#  Depends on: backend/services/executor.py, backend/tools/rag.py,
-#              backend/tools/registry.py, backend/tools/file.py,
+#  Depends on: backend/services/task_lifecycle.py, backend/services/claude_agent.py,
+#              backend/tools/rag.py, backend/tools/registry.py, backend/tools/file.py,
 #              backend/services/resource_monitor.py
 #  Used by:    pytest
 
@@ -26,9 +26,9 @@ class TestRetryBackoff:
     instead of sleeping inside the semaphore."""
 
     async def test_transient_error_sets_retry_after(self, tmp_db):
-        """_execute_task should populate _retry_after on transient error."""
+        """execute_task should populate retry_after on transient error."""
         import anthropic
-        from backend.services.executor import Executor
+        from backend.services.task_lifecycle import execute_task
 
         budget = MagicMock()
         budget.can_spend = AsyncMock(return_value=True)
@@ -37,15 +37,6 @@ class TestRetryBackoff:
 
         progress = MagicMock()
         progress.push_event = AsyncMock()
-
-        executor = Executor(
-            db=tmp_db,
-            budget=budget,
-            progress=progress,
-            resource_monitor=MagicMock(),
-            tool_registry=MagicMock(),
-        )
-        executor._running = True
 
         # Mock the Claude client to raise a transient error
         mock_client = AsyncMock()
@@ -56,7 +47,6 @@ class TestRetryBackoff:
                 body=None,
             )
         )
-        executor._client = mock_client
 
         task_row = {
             "id": "task_retry_test",
@@ -93,12 +83,21 @@ class TestRetryBackoff:
              0, "queued", "sonnet", 4096, "[]", "Test", 0, 3, now, now),
         )
 
-        with patch("backend.services.executor.get_model_id", return_value="claude-sonnet-4-6"):
-            await executor._execute_task(task_row, est_cost=0.0)
+        semaphore = asyncio.Semaphore(5)
+        dispatched = set()
+        retry_after = {}
 
-        # _retry_after should now contain the task with a future timestamp
-        assert "task_retry_test" in executor._retry_after
-        assert executor._retry_after["task_retry_test"] > time.time()
+        with patch("backend.services.claude_agent.get_model_id", return_value="claude-sonnet-4-6"):
+            await execute_task(
+                task_row=task_row, est_cost=0.0, db=tmp_db, budget=budget,
+                progress=progress, tool_registry=MagicMock(),
+                http_client=AsyncMock(), client=mock_client,
+                semaphore=semaphore, dispatched=dispatched, retry_after=retry_after,
+            )
+
+        # retry_after should now contain the task with a future timestamp
+        assert "task_retry_test" in retry_after
+        assert retry_after["task_retry_test"] > time.time()
 
     async def test_retry_after_cleared_on_stop(self, tmp_db):
         """stop() should clear the _retry_after dict."""
@@ -120,7 +119,7 @@ class TestRetryBackoff:
     async def test_backoff_capped_at_120s(self, tmp_db):
         """Backoff delay should never exceed 120 seconds."""
         import anthropic
-        from backend.services.executor import Executor
+        from backend.services.task_lifecycle import execute_task
 
         budget = MagicMock()
         budget.can_spend = AsyncMock(return_value=True)
@@ -130,15 +129,6 @@ class TestRetryBackoff:
         progress = MagicMock()
         progress.push_event = AsyncMock()
 
-        executor = Executor(
-            db=tmp_db,
-            budget=budget,
-            progress=progress,
-            resource_monitor=MagicMock(),
-            tool_registry=MagicMock(),
-        )
-        executor._running = True
-
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(
             side_effect=anthropic.RateLimitError(
@@ -147,7 +137,6 @@ class TestRetryBackoff:
                 body=None,
             )
         )
-        executor._client = mock_client
 
         task_row = {
             "id": "task_backoff_cap",
@@ -183,11 +172,20 @@ class TestRetryBackoff:
              0, "queued", "sonnet", 4096, "[]", "Test", 10, 20, now, now),
         )
 
-        with patch("backend.services.executor.get_model_id", return_value="claude-sonnet-4-6"):
-            await executor._execute_task(task_row, est_cost=0.0)
+        semaphore = asyncio.Semaphore(5)
+        dispatched = set()
+        retry_after = {}
+
+        with patch("backend.services.claude_agent.get_model_id", return_value="claude-sonnet-4-6"):
+            await execute_task(
+                task_row=task_row, est_cost=0.0, db=tmp_db, budget=budget,
+                progress=progress, tool_registry=MagicMock(),
+                http_client=AsyncMock(), client=mock_client,
+                semaphore=semaphore, dispatched=dispatched, retry_after=retry_after,
+            )
 
         # Delay should be capped: retry_after - now <= 120 + small jitter
-        delay = executor._retry_after["task_backoff_cap"] - time.time()
+        delay = retry_after["task_backoff_cap"] - time.time()
         assert delay <= 123  # 120 + up to 2s jitter + 1s tolerance
 
 
@@ -416,7 +414,7 @@ class TestAsyncResourceMonitor:
 class TestPerRoundBudgetCheck:
     async def test_budget_exhausted_stops_tool_loop(self, tmp_db):
         """When budget is exhausted mid-loop, should break with partial result."""
-        from backend.services.executor import Executor
+        from backend.services.claude_agent import run_claude_task
 
         budget = MagicMock()
         budget.record_spend = AsyncMock()
@@ -428,14 +426,6 @@ class TestPerRoundBudgetCheck:
 
         tool_registry = MagicMock()
         tool_registry.get_many = MagicMock(return_value=[])
-
-        executor = Executor(
-            db=tmp_db,
-            budget=budget,
-            progress=progress,
-            resource_monitor=MagicMock(),
-            tool_registry=tool_registry,
-        )
 
         # Create a mock Claude client
         mock_client = AsyncMock()
@@ -456,7 +446,6 @@ class TestPerRoundBudgetCheck:
         response1.usage = MagicMock(input_tokens=500, output_tokens=300)
 
         mock_client.messages.create = AsyncMock(return_value=response1)
-        executor._client = mock_client
 
         task_row = {
             "id": "task_1",
@@ -469,10 +458,14 @@ class TestPerRoundBudgetCheck:
             "max_tokens": 4096,
         }
 
-        with patch("backend.services.executor.get_model_id", return_value="claude-sonnet-4-6"), \
-             patch("backend.services.executor.calculate_cost", return_value=0.10):
+        with patch("backend.services.claude_agent.get_model_id", return_value="claude-sonnet-4-6"), \
+             patch("backend.services.claude_agent.calculate_cost", return_value=0.10):
             # est_cost=0.01 means actual cost (0.10) exceeds estimate → triggers budget check
-            result = await executor._run_claude_task(task_row, est_cost=0.01)
+            result = await run_claude_task(
+                task_row=task_row, est_cost=0.01,
+                client=mock_client, tool_registry=tool_registry,
+                budget=budget, progress=progress,
+            )
 
         assert "Partial output" in result["output"]
         # Only 1 API call should have been made (budget check prevented round 2)

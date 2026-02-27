@@ -380,6 +380,185 @@ async def cancel_project(
     return {"status": "cancelled", "project_id": project_id}
 
 
+@router.post("/{project_id}/clone", status_code=201)
+@inject
+async def clone_project(
+    project_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(Provide[Container.db]),
+) -> ProjectOut:
+    """Clone a project: copies metadata, latest plan, and all tasks (reset to PENDING)."""
+    row = await _get_owned_project(db, project_id, current_user)
+
+    new_project_id = uuid.uuid4().hex[:12]
+    now = time.time()
+
+    async with db.transaction():
+        # 1. Clone project row
+        await db.execute_write(
+            "INSERT INTO projects (id, name, requirements, status, config_json, owner_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (new_project_id, f"{row['name']} (clone)", row["requirements"],
+             ProjectStatus.DRAFT, row["config_json"], current_user["id"], now, now),
+        )
+
+        # 2. Find latest approved plan (or latest draft)
+        plan_row = await db.fetchone(
+            "SELECT * FROM plans WHERE project_id = ? AND status = 'approved' ORDER BY version DESC LIMIT 1",
+            (project_id,),
+        )
+        if not plan_row:
+            plan_row = await db.fetchone(
+                "SELECT * FROM plans WHERE project_id = ? ORDER BY version DESC LIMIT 1",
+                (project_id,),
+            )
+
+        new_plan_id = None
+        if plan_row:
+            new_plan_id = uuid.uuid4().hex[:12]
+            await db.execute_write(
+                "INSERT INTO plans (id, project_id, version, model_used, prompt_tokens, "
+                "completion_tokens, cost_usd, plan_json, status, created_at) "
+                "VALUES (?, ?, 1, ?, 0, 0, 0.0, ?, 'draft', ?)",
+                (new_plan_id, new_project_id, plan_row["model_used"], plan_row["plan_json"], now),
+            )
+
+        # 3. Clone tasks (reset status, clear output/cost/retry)
+        old_tasks = await db.fetchall(
+            "SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at ASC",
+            (project_id,),
+        )
+
+        old_to_new: dict[str, str] = {}
+        for old_task in old_tasks:
+            new_task_id = uuid.uuid4().hex[:12]
+            old_to_new[old_task["id"]] = new_task_id
+
+            await db.execute_write(
+                "INSERT INTO tasks (id, project_id, plan_id, title, description, task_type, "
+                "priority, status, model_tier, context_json, tools_json, system_prompt, "
+                "max_tokens, wave, requirement_ids_json, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (new_task_id, new_project_id, new_plan_id or old_task["plan_id"],
+                 old_task["title"], old_task["description"], old_task["task_type"],
+                 old_task["priority"], TaskStatus.PENDING, old_task["model_tier"],
+                 old_task["context_json"], old_task["tools_json"], old_task["system_prompt"],
+                 old_task["max_tokens"], old_task["wave"], old_task["requirement_ids_json"],
+                 now, now),
+            )
+
+        # 4. Remap task dependencies
+        if old_to_new:
+            old_deps = await db.fetchall(
+                "SELECT task_id, depends_on FROM task_deps WHERE task_id IN ({})".format(
+                    ",".join("?" * len(old_to_new))
+                ),
+                list(old_to_new.keys()),
+            )
+            for dep in old_deps:
+                new_from = old_to_new.get(dep["task_id"])
+                new_to = old_to_new.get(dep["depends_on"])
+                if new_from and new_to:
+                    await db.execute_write(
+                        "INSERT INTO task_deps (task_id, depends_on) VALUES (?, ?)",
+                        (new_from, new_to),
+                    )
+
+    new_row = await db.fetchone("SELECT * FROM projects WHERE id = ?", (new_project_id,))
+    return ProjectOut(**await _row_to_project(new_row, db, include_task_summary=True))
+
+
+@router.get("/{project_id}/export")
+@inject
+async def export_project(
+    project_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(Provide[Container.db]),
+):
+    """Export full project data as downloadable JSON."""
+    from fastapi.responses import JSONResponse
+    from backend.routes.tasks import _rows_to_tasks
+
+    row = await _get_owned_project(db, project_id, current_user)
+    project_data = await _row_to_project(row, db, include_task_summary=True)
+
+    # Plans
+    plan_rows = await db.fetchall(
+        "SELECT * FROM plans WHERE project_id = ? ORDER BY version DESC", (project_id,)
+    )
+    plans = [
+        {
+            "id": p["id"], "version": p["version"], "model_used": p["model_used"],
+            "prompt_tokens": p["prompt_tokens"], "completion_tokens": p["completion_tokens"],
+            "cost_usd": p["cost_usd"], "plan": json.loads(p["plan_json"]),
+            "status": p["status"], "created_at": p["created_at"],
+        }
+        for p in plan_rows
+    ]
+
+    # Tasks
+    task_rows = await db.fetchall(
+        "SELECT * FROM tasks WHERE project_id = ? ORDER BY wave ASC, priority ASC", (project_id,)
+    )
+    tasks = await _rows_to_tasks(task_rows, db)
+
+    # Events
+    event_rows = await db.fetchall(
+        "SELECT * FROM task_events WHERE project_id = ? ORDER BY timestamp ASC", (project_id,)
+    )
+    events = [
+        {
+            "id": e["id"], "task_id": e["task_id"], "event_type": e["event_type"],
+            "message": e["message"],
+            "data": json.loads(e["data_json"]) if e["data_json"] else None,
+            "timestamp": e["timestamp"],
+        }
+        for e in event_rows
+    ]
+
+    # Checkpoints
+    cp_rows = await db.fetchall(
+        "SELECT * FROM checkpoints WHERE project_id = ? ORDER BY created_at ASC", (project_id,)
+    )
+    checkpoints = [
+        {
+            "id": c["id"], "task_id": c["task_id"], "checkpoint_type": c["checkpoint_type"],
+            "summary": c["summary"],
+            "attempts": json.loads(c["attempts_json"]) if c["attempts_json"] else [],
+            "question": c["question"], "response": c["response"],
+            "resolved_at": c["resolved_at"], "created_at": c["created_at"],
+        }
+        for c in cp_rows
+    ]
+
+    # Usage
+    usage_rows = await db.fetchall(
+        "SELECT * FROM usage_log WHERE project_id = ? ORDER BY timestamp ASC", (project_id,)
+    )
+    usage = [
+        {
+            "id": u["id"], "task_id": u["task_id"], "provider": u["provider"],
+            "model": u["model"], "prompt_tokens": u["prompt_tokens"],
+            "completion_tokens": u["completion_tokens"], "cost_usd": u["cost_usd"],
+            "purpose": u["purpose"], "timestamp": u["timestamp"],
+        }
+        for u in usage_rows
+    ]
+
+    return JSONResponse(
+        content={
+            "exported_at": time.time(),
+            "project": project_data,
+            "plans": plans,
+            "tasks": tasks,
+            "events": events,
+            "checkpoints": checkpoints,
+            "usage": usage,
+        },
+        headers={"Content-Disposition": f'attachment; filename="project_{project_id}.json"'},
+    )
+
+
 @router.get("/{project_id}/coverage")
 @inject
 async def get_coverage(

@@ -33,8 +33,28 @@ export const pauseExecution = (projectId: string) =>
 export const cancelProject = (projectId: string) =>
   apiPost<{ status: string }>(`/projects/${projectId}/cancel`)
 
-export const listTasks = (projectId: string) =>
-  apiFetch<Task[]>(`/tasks/project/${projectId}`)
+export interface TaskListParams {
+  status?: string
+  wave?: number
+  model_tier?: string
+  search?: string
+  sort?: 'priority' | 'created_at' | 'wave' | 'status'
+  sort_dir?: 'asc' | 'desc'
+  exclude_output?: boolean
+}
+
+export const listTasks = (projectId: string, params?: TaskListParams) => {
+  const qs = new URLSearchParams()
+  if (params?.status) qs.set('status', params.status)
+  if (params?.wave !== undefined) qs.set('wave', String(params.wave))
+  if (params?.model_tier) qs.set('model_tier', params.model_tier)
+  if (params?.search) qs.set('search', params.search)
+  if (params?.sort) qs.set('sort', params.sort)
+  if (params?.sort_dir) qs.set('sort_dir', params.sort_dir)
+  if (params?.exclude_output) qs.set('exclude_output', 'true')
+  const query = qs.toString()
+  return apiFetch<Task[]>(`/tasks/project/${projectId}${query ? `?${query}` : ''}`)
+}
 
 export const fetchCoverage = (projectId: string) =>
   apiFetch<CoverageReport>(`/projects/${projectId}/coverage`)
@@ -47,3 +67,33 @@ export const resolveCheckpoint = (checkpointId: string, action: string, guidance
 
 export const reviewTask = (taskId: string, action: string, feedback = '') =>
   apiPost<Task>(`/tasks/${taskId}/review`, { action, feedback })
+
+export const updateTask = (taskId: string, body: Record<string, unknown>) =>
+  apiPatch<Task>(`/tasks/${taskId}`, body)
+
+export const retryTask = (taskId: string) =>
+  apiPost<Task>(`/tasks/${taskId}/retry`)
+
+export const cloneProject = (projectId: string) =>
+  apiPost<Project>(`/projects/${projectId}/clone`)
+
+export const exportProject = async (projectId: string) => {
+  const { getAccessToken } = await import('./auth')
+  const token = getAccessToken()
+  const resp = await fetch(`/api/projects/${projectId}/export`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!resp.ok) throw new Error('Export failed')
+  const blob = await resp.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `project_${projectId}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+export const bulkTaskAction = (action: 'retry' | 'cancel', taskIds: string[]) =>
+  apiPost<{ succeeded: string[]; failed: { id: string; reason: string }[] }>(
+    '/tasks/bulk', { action, task_ids: taskIds }
+  )

@@ -16,6 +16,8 @@ import ProjectDetail from './pages/ProjectDetail'
 import TaskDetail from './pages/TaskDetail'
 import Usage from './pages/Usage'
 import Services from './pages/Services'
+import Admin from './pages/Admin'
+import RAG from './pages/RAG'
 import NotFound from './pages/NotFound'
 
 export default function App() {
@@ -36,6 +38,8 @@ export default function App() {
                 <Route path="/project/:id/task/:taskId" element={<TaskDetail />} />
                 <Route path="/usage" element={<Usage />} />
                 <Route path="/services" element={<Services />} />
+                <Route path="/admin" element={<Admin />} />
+                <Route path="/rag" element={<RAG />} />
               </Route>
             </Route>
 

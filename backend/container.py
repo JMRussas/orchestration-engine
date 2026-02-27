@@ -17,6 +17,7 @@ from backend.services.executor import Executor
 from backend.services.planner import PlannerService
 from backend.services.progress import ProgressManager
 from backend.services.resource_monitor import ResourceMonitor
+from backend.tools.rag import RAGIndexCache
 from backend.tools.registry import ToolRegistry
 
 
@@ -37,6 +38,8 @@ class Container(containers.DeclarativeContainer):
             "backend.routes.events",
             "backend.routes.auth",
             "backend.routes.checkpoints",
+            "backend.routes.admin",
+            "backend.routes.rag",
             "backend.middleware.auth",
         ]
     )
@@ -44,7 +47,10 @@ class Container(containers.DeclarativeContainer):
     # --- Core ---
     db = providers.Singleton(Database)
     http_client = providers.Singleton(httpx.AsyncClient, timeout=300.0)
-    tool_registry = providers.Singleton(ToolRegistry, http_client=http_client)
+    rag_cache = providers.Singleton(RAGIndexCache)
+    tool_registry = providers.Singleton(
+        ToolRegistry, http_client=http_client, rag_cache=rag_cache,
+    )
 
     # --- Services ---
     auth = providers.Singleton(AuthService, db=db)

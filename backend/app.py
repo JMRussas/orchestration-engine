@@ -31,6 +31,8 @@ from backend.routes.services import health_router, router as services_router
 from backend.routes.events import router as events_router
 from backend.routes.tasks import router as tasks_router
 from backend.routes.checkpoints import router as checkpoints_router
+from backend.routes.admin import router as admin_router
+from backend.routes.rag import router as rag_router
 from backend.routes.usage import router as usage_router
 
 # Create and wire the DI container
@@ -127,6 +129,8 @@ app.include_router(services_router, prefix="/api", dependencies=_auth_dep)
 app.include_router(tasks_router, prefix="/api", dependencies=_auth_dep)
 app.include_router(usage_router, prefix="/api", dependencies=_auth_dep)
 app.include_router(checkpoints_router, prefix="/api", dependencies=_auth_dep)
+app.include_router(admin_router, prefix="/api", dependencies=_auth_dep)
+app.include_router(rag_router, prefix="/api", dependencies=_auth_dep)
 
 # Events route uses query-param token auth (EventSource can't send headers)
 app.include_router(events_router, prefix="/api")

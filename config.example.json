@@ -65,7 +65,7 @@
     "max_task_retries": 5,
     "wave_checkpoints": false,
     "context_forward_max_chars": 2000,
-    "verification_enabled": false,
+    "verification_enabled": true,
     "verification_model": "claude-haiku-4-5-20251001",
     "verification_max_tokens": 1024,
     "checkpoint_on_retry_exhausted": true,

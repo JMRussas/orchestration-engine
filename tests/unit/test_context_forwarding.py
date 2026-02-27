@@ -2,7 +2,7 @@
 #
 #  Tests for injecting completed task outputs into dependent tasks' context.
 #
-#  Depends on: backend/services/executor.py, backend/db/connection.py
+#  Depends on: backend/services/task_lifecycle.py, backend/db/connection.py
 #  Used by:    pytest
 
 import json
@@ -13,52 +13,20 @@ import pytest
 
 from backend.models.enums import ProjectStatus, TaskStatus
 from backend.services.decomposer import decompose_plan
-from backend.services.executor import Executor
-
-
-@pytest.fixture
-async def executor_with_db(tmp_db):
-    """Create an Executor wired to tmp_db with mocked external services."""
-    mock_budget = AsyncMock()
-    mock_budget.can_spend = AsyncMock(return_value=True)
-    mock_budget.reserve_spend = AsyncMock(return_value=True)
-    mock_budget.can_spend_project = AsyncMock(return_value=True)
-    mock_budget.release_reservation = AsyncMock()
-    mock_budget.record_spend = AsyncMock()
-
-    mock_progress = AsyncMock()
-    mock_progress.push_event = AsyncMock()
-
-    mock_rm = MagicMock()
-    mock_rm.is_available = MagicMock(return_value=True)
-
-    mock_registry = MagicMock()
-
-    executor = Executor(
-        db=tmp_db,
-        budget=mock_budget,
-        progress=mock_progress,
-        resource_monitor=mock_rm,
-        tool_registry=mock_registry,
-    )
-
-    return executor
+from backend.services.task_lifecycle import forward_context
 
 
 class TestForwardContext:
-    async def test_output_injected_into_dependent(self, seeded_db, executor_with_db):
+    async def test_output_injected_into_dependent(self, seeded_db):
         """Completing Task A should inject its output into Task B's context."""
         tmp_db, project_id, plan_id = seeded_db
-        # Use executor_with_db fixture by passing our seeded tmp_db
-        # (seeded_db uses tmp_db fixture internally)
-        executor = executor_with_db
 
         result = await decompose_plan(project_id, plan_id, db=tmp_db)
         task_ids = result["task_ids"]
 
         # Simulate Task A completing
         task_a = await tmp_db.fetchone("SELECT * FROM tasks WHERE id = ?", (task_ids[0],))
-        await executor._forward_context(task_a, "Task A produced this output")
+        await forward_context(completed_task=task_a, output_text="Task A produced this output", db=tmp_db)
 
         # Check Task B's context now has the dependency output
         task_b = await tmp_db.fetchone("SELECT context_json FROM tasks WHERE id = ?", (task_ids[1],))
@@ -70,7 +38,7 @@ class TestForwardContext:
         assert dep_entries[0]["source_task_title"] == "Task A"
         assert dep_entries[0]["content"] == "Task A produced this output"
 
-    async def test_non_dependent_not_affected(self, tmp_db, executor_with_db):
+    async def test_non_dependent_not_affected(self, tmp_db):
         """Tasks that don't depend on the completed task should be unchanged."""
         now = time.time()
         project_id = "proj_ctx_002"
@@ -106,15 +74,14 @@ class TestForwardContext:
 
         # Forward from Task A — B is independent, should not be affected
         task_a = await tmp_db.fetchone("SELECT * FROM tasks WHERE id = ?", (task_ids[0],))
-        executor = executor_with_db
-        await executor._forward_context(task_a, "A's output")
+        await forward_context(completed_task=task_a, output_text="A's output", db=tmp_db)
 
         after = await tmp_db.fetchone("SELECT context_json FROM tasks WHERE id = ?", (task_ids[1],))
         ctx_after = json.loads(after["context_json"])
 
         assert ctx_before == ctx_after
 
-    async def test_output_truncated_at_max_chars(self, seeded_db, executor_with_db):
+    async def test_output_truncated_at_max_chars(self, seeded_db):
         """Long outputs should be truncated to CONTEXT_FORWARD_MAX_CHARS."""
         from unittest.mock import patch
 
@@ -123,26 +90,24 @@ class TestForwardContext:
         task_ids = result["task_ids"]
 
         task_a = await tmp_db.fetchone("SELECT * FROM tasks WHERE id = ?", (task_ids[0],))
-        executor = executor_with_db
 
         # Set a small max for testing
-        with patch("backend.services.executor.CONTEXT_FORWARD_MAX_CHARS", 50):
-            await executor._forward_context(task_a, "X" * 200)
+        with patch("backend.services.task_lifecycle.CONTEXT_FORWARD_MAX_CHARS", 50):
+            await forward_context(completed_task=task_a, output_text="X" * 200, db=tmp_db)
 
         task_b = await tmp_db.fetchone("SELECT context_json FROM tasks WHERE id = ?", (task_ids[1],))
         ctx = json.loads(task_b["context_json"])
         dep_entries = [e for e in ctx if e.get("type") == "dependency_output"]
         assert len(dep_entries[0]["content"]) == 50
 
-    async def test_empty_output_forwards_empty_content(self, seeded_db, executor_with_db):
+    async def test_empty_output_forwards_empty_content(self, seeded_db):
         """Empty output should still create a context entry with empty content."""
         tmp_db, project_id, plan_id = seeded_db
         result = await decompose_plan(project_id, plan_id, db=tmp_db)
         task_ids = result["task_ids"]
 
         task_a = await tmp_db.fetchone("SELECT * FROM tasks WHERE id = ?", (task_ids[0],))
-        executor = executor_with_db
-        await executor._forward_context(task_a, "")
+        await forward_context(completed_task=task_a, output_text="", db=tmp_db)
 
         task_b = await tmp_db.fetchone("SELECT context_json FROM tasks WHERE id = ?", (task_ids[1],))
         ctx = json.loads(task_b["context_json"])
@@ -150,7 +115,7 @@ class TestForwardContext:
         assert len(dep_entries) == 1
         assert dep_entries[0]["content"] == ""
 
-    async def test_multiple_deps_forward_all(self, tmp_db, executor_with_db):
+    async def test_multiple_deps_forward_all(self, tmp_db):
         """A task with two dependencies gets context from both when they complete."""
         now = time.time()
         project_id = "proj_ctx_003"
@@ -182,15 +147,13 @@ class TestForwardContext:
         result = await decompose_plan(project_id, plan_id, db=tmp_db)
         task_ids = result["task_ids"]
 
-        executor = executor_with_db
-
         # Forward from A
         task_a = await tmp_db.fetchone("SELECT * FROM tasks WHERE id = ?", (task_ids[0],))
-        await executor._forward_context(task_a, "Output from A")
+        await forward_context(completed_task=task_a, output_text="Output from A", db=tmp_db)
 
         # Forward from B
         task_b = await tmp_db.fetchone("SELECT * FROM tasks WHERE id = ?", (task_ids[1],))
-        await executor._forward_context(task_b, "Output from B")
+        await forward_context(completed_task=task_b, output_text="Output from B", db=tmp_db)
 
         # Check C has both
         task_c = await tmp_db.fetchone("SELECT context_json FROM tasks WHERE id = ?", (task_ids[2],))
@@ -201,15 +164,14 @@ class TestForwardContext:
         titles = {e["source_task_title"] for e in dep_entries}
         assert titles == {"A", "B"}
 
-    async def test_none_output_handled(self, seeded_db, executor_with_db):
+    async def test_none_output_handled(self, seeded_db):
         """None output should be treated as empty string."""
         tmp_db, project_id, plan_id = seeded_db
         result = await decompose_plan(project_id, plan_id, db=tmp_db)
         task_ids = result["task_ids"]
 
         task_a = await tmp_db.fetchone("SELECT * FROM tasks WHERE id = ?", (task_ids[0],))
-        executor = executor_with_db
-        await executor._forward_context(task_a, None)
+        await forward_context(completed_task=task_a, output_text=None, db=tmp_db)
 
         task_b = await tmp_db.fetchone("SELECT context_json FROM tasks WHERE id = ?", (task_ids[1],))
         ctx = json.loads(task_b["context_json"])

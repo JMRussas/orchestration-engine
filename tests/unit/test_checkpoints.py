@@ -3,7 +3,7 @@
 #  Tests for checkpoint creation during retry exhaustion
 #  and the checkpoint API endpoints.
 #
-#  Depends on: backend/services/executor.py, backend/routes/checkpoints.py
+#  Depends on: backend/services/task_lifecycle.py, backend/routes/checkpoints.py
 #  Used by:    pytest
 
 import json
@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from backend.models.enums import ProjectStatus, TaskStatus
-from backend.services.executor import Executor
+from backend.services.task_lifecycle import create_checkpoint
 
 
 @pytest.fixture
@@ -61,17 +61,11 @@ class TestCheckpointCreation:
         mock_progress = AsyncMock()
         mock_progress.push_event = AsyncMock()
 
-        executor = Executor(
-            db=tmp_db,
-            budget=AsyncMock(),
-            progress=mock_progress,
-            resource_monitor=MagicMock(),
-            tool_registry=MagicMock(),
-        )
-
         task_row = await tmp_db.fetchone("SELECT * FROM tasks WHERE id = ?", (task_id,))
-        await executor._create_checkpoint(
-            project_id, task_id, task_row, "Max retries exceeded: Connection error",
+        await create_checkpoint(
+            project_id=project_id, task_id=task_id, task_row=task_row,
+            error_msg="Max retries exceeded: Connection error",
+            db=tmp_db, progress=mock_progress,
         )
 
         # Check checkpoint was created
@@ -93,18 +87,14 @@ class TestCheckpointCreation:
         """Creating a checkpoint should set the task to NEEDS_REVIEW."""
         tmp_db, project_id, task_id = checkpoint_setup
 
-        executor = Executor(
-            db=tmp_db,
-            budget=AsyncMock(),
-            progress=AsyncMock(),
-            resource_monitor=MagicMock(),
-            tool_registry=MagicMock(),
-        )
-        executor._progress.push_event = AsyncMock()
+        mock_progress = AsyncMock()
+        mock_progress.push_event = AsyncMock()
 
         task_row = await tmp_db.fetchone("SELECT * FROM tasks WHERE id = ?", (task_id,))
-        await executor._create_checkpoint(
-            project_id, task_id, task_row, "Max retries exceeded",
+        await create_checkpoint(
+            project_id=project_id, task_id=task_id, task_row=task_row,
+            error_msg="Max retries exceeded",
+            db=tmp_db, progress=mock_progress,
         )
 
         task = await tmp_db.fetchone("SELECT status FROM tasks WHERE id = ?", (task_id,))
@@ -117,17 +107,11 @@ class TestCheckpointCreation:
         mock_progress = AsyncMock()
         mock_progress.push_event = AsyncMock()
 
-        executor = Executor(
-            db=tmp_db,
-            budget=AsyncMock(),
-            progress=mock_progress,
-            resource_monitor=MagicMock(),
-            tool_registry=MagicMock(),
-        )
-
         task_row = await tmp_db.fetchone("SELECT * FROM tasks WHERE id = ?", (task_id,))
-        await executor._create_checkpoint(
-            project_id, task_id, task_row, "Max retries exceeded",
+        await create_checkpoint(
+            project_id=project_id, task_id=task_id, task_row=task_row,
+            error_msg="Max retries exceeded",
+            db=tmp_db, progress=mock_progress,
         )
 
         # Find the checkpoint event call

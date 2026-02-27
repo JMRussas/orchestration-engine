@@ -109,6 +109,12 @@ class ReviewAction(BaseModel):
     feedback: str = Field(default="", max_length=10_000)
 
 
+class BulkTaskAction(BaseModel):
+    """Perform an action on multiple tasks at once."""
+    action: str = Field(..., pattern="^(retry|cancel)$")
+    task_ids: list[str] = Field(..., min_length=1, max_length=100)
+
+
 # ---------------------------------------------------------------------------
 # Checkpoints
 # ---------------------------------------------------------------------------
@@ -204,3 +210,58 @@ class RefreshResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+
+
+# ---------------------------------------------------------------------------
+# Admin
+# ---------------------------------------------------------------------------
+
+class AdminUserOut(BaseModel):
+    id: str
+    email: str
+    display_name: str
+    role: str
+    is_active: bool
+    created_at: float
+    last_login_at: float | None = None
+    project_count: int = 0
+
+
+class AdminUserUpdate(BaseModel):
+    role: str | None = Field(default=None, pattern="^(admin|user)$")
+    is_active: bool | None = None
+
+
+class AdminStats(BaseModel):
+    total_users: int
+    active_users: int
+    total_projects: int
+    projects_by_status: dict[str, int]
+    total_tasks: int
+    tasks_by_status: dict[str, int]
+    total_spend_usd: float
+    spend_by_model: dict[str, float]
+    task_completion_rate: float
+
+
+# ---------------------------------------------------------------------------
+# RAG
+# ---------------------------------------------------------------------------
+
+class RAGDatabaseInfo(BaseModel):
+    name: str
+    path: str
+    exists: bool
+    file_size_bytes: int = 0
+    chunk_count: int = 0
+    source_count: int = 0
+    index_status: str = "unknown"
+    sources: list[dict] = Field(default_factory=list)
+
+
+class RAGChunkPreview(BaseModel):
+    id: str
+    source: str
+    type_name: str | None = None
+    file_path: str | None = None
+    text_preview: str

@@ -16,8 +16,8 @@ from backend.config import MAX_TASK_RETRIES
 from backend.container import Container
 from backend.db.connection import Database
 from backend.middleware.auth import get_current_user
-from backend.models.enums import TaskStatus
-from backend.models.schemas import ReviewAction, TaskOut, TaskUpdate
+from backend.models.enums import TaskSortField, TaskStatus
+from backend.models.schemas import BulkTaskAction, ReviewAction, TaskOut, TaskUpdate
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -103,28 +103,103 @@ async def _rows_to_tasks(rows, db: Database) -> list[dict]:
 # Endpoints
 # ---------------------------------------------------------------------------
 
+@router.post("/bulk")
+@inject
+async def bulk_task_action(
+    body: BulkTaskAction,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(Provide[Container.db]),
+):
+    """Perform an action on multiple tasks at once.
+
+    Returns {succeeded: [...], failed: [{id, reason}]}.
+    """
+    results: dict = {"succeeded": [], "failed": []}
+
+    for task_id in body.task_ids:
+        try:
+            row = await _verify_task_ownership(db, task_id, current_user)
+        except HTTPException as e:
+            results["failed"].append({"id": task_id, "reason": e.detail})
+            continue
+
+        if body.action == "retry":
+            if row["status"] != TaskStatus.FAILED:
+                results["failed"].append({"id": task_id, "reason": "Not in failed state"})
+                continue
+            if row["retry_count"] >= MAX_TASK_RETRIES:
+                results["failed"].append({"id": task_id, "reason": "Max retries reached"})
+                continue
+            await db.execute_write(
+                "UPDATE tasks SET status = ?, error = NULL, output_text = NULL, "
+                "retry_count = retry_count + 1, updated_at = ? WHERE id = ?",
+                (TaskStatus.PENDING, time.time(), task_id),
+            )
+            results["succeeded"].append(task_id)
+
+        elif body.action == "cancel":
+            if row["status"] not in (TaskStatus.PENDING, TaskStatus.BLOCKED, TaskStatus.QUEUED):
+                results["failed"].append({"id": task_id, "reason": f"Cannot cancel {row['status']} task"})
+                continue
+            await db.execute_write(
+                "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
+                (TaskStatus.CANCELLED, time.time(), task_id),
+            )
+            results["succeeded"].append(task_id)
+
+    return results
+
+
 @router.get("/project/{project_id}")
 @inject
 async def list_tasks(
     project_id: str,
     status: TaskStatus | None = None,
+    wave: int | None = Query(default=None, ge=0),
+    model_tier: str | None = None,
+    search: str | None = Query(default=None, max_length=200),
+    sort: TaskSortField = TaskSortField.PRIORITY,
+    sort_dir: str = Query(default="asc", pattern="^(asc|desc)$"),
+    exclude_output: bool = False,
     current_user: dict = Depends(get_current_user),
     db: Database = Depends(Provide[Container.db]),
 ) -> list[TaskOut]:
-    """List all tasks for a project."""
+    """List all tasks for a project with optional filtering and sorting."""
     # Verify project ownership
     from backend.routes.projects import _get_owned_project
     await _get_owned_project(db, project_id, current_user)
 
     query = "SELECT * FROM tasks WHERE project_id = ?"
     params: list = [project_id]
+
     if status:
         query += " AND status = ?"
         params.append(status.value)
-    query += " ORDER BY priority ASC, created_at ASC"
+    if wave is not None:
+        query += " AND wave = ?"
+        params.append(wave)
+    if model_tier:
+        query += " AND model_tier = ?"
+        params.append(model_tier)
+    if search:
+        query += " AND (INSTR(LOWER(title), LOWER(?)) > 0 OR INSTR(LOWER(description), LOWER(?)) > 0)"
+        params.extend([search, search])
+
+    # Sort column restricted to enum value (prevents injection)
+    sort_column = sort.value
+    direction = "ASC" if sort_dir == "asc" else "DESC"
+    secondary = ", created_at ASC" if sort_column != "created_at" else ""
+    query += f" ORDER BY {sort_column} {direction}{secondary}"
 
     rows = await db.fetchall(query, params)
-    return [TaskOut(**d) for d in await _rows_to_tasks(rows, db)]
+    tasks = [TaskOut(**d) for d in await _rows_to_tasks(rows, db)]
+
+    if exclude_output:
+        for t in tasks:
+            t.output_text = None
+            t.output_artifacts = []
+
+    return tasks
 
 
 @router.get("/{task_id}")

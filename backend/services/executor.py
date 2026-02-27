@@ -7,53 +7,32 @@
 #  Depends on: backend/config.py, backend/db/connection.py,
 #              services/budget.py, services/model_router.py,
 #              services/resource_monitor.py, services/progress.py,
-#              tools/registry.py
+#              services/task_lifecycle.py, tools/registry.py
 #  Used by:    container.py, app.py (background task)
 
 import asyncio
 import json
 import logging
-import random
 import time
-import uuid
 
 import anthropic
-import httpx
-
-from backend.logging_config import set_task_id
-
-logger = logging.getLogger("orchestration.executor")
 
 from backend.config import (
     ANTHROPIC_API_KEY,
-    API_TIMEOUT,
-    CHECKPOINT_ON_RETRY_EXHAUSTED,
-    CONTEXT_FORWARD_MAX_CHARS,
     MAX_CONCURRENT_TASKS,
-    MAX_TOOL_ROUNDS,
-    OLLAMA_DEFAULT_MODEL,
-    OLLAMA_GENERATE_TIMEOUT,
-    OLLAMA_HOSTS,
     SHUTDOWN_GRACE_SECONDS,
     STALE_TASK_THRESHOLD_SECONDS,
     TICK_INTERVAL,
-    VERIFICATION_ENABLED,
     WAVE_CHECKPOINTS,
 )
 from backend.models.enums import ModelTier, ProjectStatus, TaskStatus
 from backend.services.model_router import calculate_cost, get_model_id
+from backend.services.task_lifecycle import execute_task
+
+logger = logging.getLogger("orchestration.executor")
 
 # Token estimate for budget reservation before task execution
 _EST_TASK_INPUT_TOKENS = 1500  # system prompt + context + tool definitions
-
-# Transient errors that warrant automatic retry with backoff
-_TRANSIENT_ERRORS = (
-    anthropic.RateLimitError,
-    anthropic.APIConnectionError,
-    anthropic.InternalServerError,
-    httpx.ConnectError,
-    httpx.ReadTimeout,
-)
 
 
 class Executor:
@@ -240,7 +219,21 @@ class Executor:
                         await self._budget.release_reservation(est_cost)
                     continue  # Another tick already claimed it
                 self._dispatched.add(task_row["id"])
-                handle = asyncio.create_task(self._execute_task(task_row, est_cost))
+                handle = asyncio.create_task(
+                    execute_task(
+                        task_row=task_row,
+                        est_cost=est_cost,
+                        db=self._db,
+                        budget=self._budget,
+                        progress=self._progress,
+                        tool_registry=self._tool_registry,
+                        http_client=self._http,
+                        client=self._client,
+                        semaphore=self._semaphore,
+                        dispatched=self._dispatched,
+                        retry_after=self._retry_after,
+                    )
+                )
                 self._in_flight.add(handle)
                 handle.add_done_callback(self._in_flight.discard)
 
@@ -353,452 +346,3 @@ class Executor:
                 return False
 
         return True
-
-    async def _create_checkpoint(
-        self, project_id: str, task_id: str, task_row, error_msg: str,
-    ):
-        """Create a checkpoint for a task that exhausted retries.
-
-        Sets the task to NEEDS_REVIEW and creates a structured checkpoint record
-        with attempt history for the user to resolve.
-        """
-        checkpoint_id = uuid.uuid4().hex[:12]
-
-        # Gather attempt history from task_events
-        events = await self._db.fetchall(
-            "SELECT message, timestamp FROM task_events "
-            "WHERE task_id = ? AND event_type IN ('task_retry', 'task_failed') "
-            "ORDER BY timestamp",
-            (task_id,),
-        )
-        attempts = [
-            {"message": e["message"], "timestamp": e["timestamp"]}
-            for e in events
-        ]
-
-        await self._db.execute_write(
-            "INSERT INTO checkpoints "
-            "(id, project_id, task_id, checkpoint_type, summary, attempts_json, question, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                checkpoint_id, project_id, task_id, "retry_exhausted",
-                f"Task '{task_row['title']}' failed after {task_row['max_retries']} attempts",
-                json.dumps(attempts),
-                "How should we proceed? Options: retry with modified approach, "
-                "skip this task, or fail it.",
-                time.time(),
-            ),
-        )
-
-        await self._db.execute_write(
-            "UPDATE tasks SET status = ?, error = ?, updated_at = ? WHERE id = ?",
-            (TaskStatus.NEEDS_REVIEW, error_msg, time.time(), task_id),
-        )
-
-        await self._progress.push_event(
-            project_id, "checkpoint",
-            f"Checkpoint: {task_row['title']} needs attention after {task_row['max_retries']} failed attempts",
-            task_id=task_id, checkpoint_id=checkpoint_id,
-        )
-
-    async def _verify_task_output(
-        self, task_row, output_text: str, project_id: str, task_id: str,
-    ) -> bool:
-        """Run output verification. Returns True if the task status was overridden."""
-        from backend.services.verifier import verify_output
-        from backend.models.enums import VerificationResult
-
-        try:
-            verification = await verify_output(
-                task_title=task_row["title"],
-                task_description=task_row["description"],
-                output_text=output_text,
-                client=self._client,
-                budget=self._budget,
-                project_id=project_id,
-                task_id=task_id,
-            )
-        except Exception as e:
-            # Verification failure should not block task completion
-            logger.warning("Verification failed for task %s: %s", task_id, e)
-            await self._db.execute_write(
-                "UPDATE tasks SET verification_status = ?, verification_notes = ?, "
-                "updated_at = ? WHERE id = ?",
-                (VerificationResult.SKIPPED, f"Verification error: {e}",
-                 time.time(), task_id),
-            )
-            return False
-
-        v_result = verification["result"]
-        v_notes = verification["notes"]
-
-        await self._db.execute_write(
-            "UPDATE tasks SET verification_status = ?, verification_notes = ?, "
-            "updated_at = ? WHERE id = ?",
-            (v_result, v_notes, time.time(), task_id),
-        )
-
-        if v_result == VerificationResult.GAPS_FOUND:
-            retry_count = task_row["retry_count"]
-            max_retries = task_row["max_retries"]
-            if retry_count < max_retries:
-                # Auto-retry with verification feedback appended to context
-                ctx = json.loads(task_row["context_json"]) if task_row["context_json"] else []
-                ctx.append({
-                    "type": "verification_feedback",
-                    "content": f"Previous attempt had gaps: {v_notes}. Address these issues.",
-                })
-                await self._db.execute_write(
-                    "UPDATE tasks SET status = ?, context_json = ?, "
-                    "retry_count = retry_count + 1, completed_at = NULL, updated_at = ? WHERE id = ?",
-                    (TaskStatus.PENDING, json.dumps(ctx), time.time(), task_id),
-                )
-                await self._progress.push_event(
-                    project_id, "task_verification_retry",
-                    f"{task_row['title']}: gaps found, retrying with feedback",
-                    task_id=task_id, verification_notes=v_notes,
-                )
-                return True
-
-        if v_result == VerificationResult.HUMAN_NEEDED:
-            await self._db.execute_write(
-                "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
-                (TaskStatus.NEEDS_REVIEW, time.time(), task_id),
-            )
-            await self._progress.push_event(
-                project_id, "task_needs_review",
-                f"{task_row['title']}: requires human review",
-                task_id=task_id, verification_notes=v_notes,
-            )
-            return True
-
-        return False
-
-    async def _forward_context(self, completed_task, output_text: str):
-        """Inject completed task's output summary into dependent tasks' context."""
-        deps = await self._db.fetchall(
-            "SELECT task_id FROM task_deps WHERE depends_on = ?",
-            (completed_task["id"],),
-        )
-        if not deps:
-            return
-
-        # Truncate output to configured max for context injection
-        summary = (output_text or "")[:CONTEXT_FORWARD_MAX_CHARS]
-        context_entry = {
-            "type": "dependency_output",
-            "source_task_id": completed_task["id"],
-            "source_task_title": completed_task["title"],
-            "content": summary,
-        }
-
-        for dep in deps:
-            dep_task = await self._db.fetchone(
-                "SELECT context_json FROM tasks WHERE id = ?", (dep["task_id"],),
-            )
-            if dep_task:
-                ctx = json.loads(dep_task["context_json"]) if dep_task["context_json"] else []
-                ctx.append(context_entry)
-                await self._db.execute_write(
-                    "UPDATE tasks SET context_json = ?, updated_at = ? WHERE id = ?",
-                    (json.dumps(ctx), time.time(), dep["task_id"]),
-                )
-
-    async def _execute_task(self, task_row, est_cost: float = 0.0):
-        """Execute a single task with semaphore-controlled concurrency."""
-        task_id = task_row["id"]
-        set_task_id(task_id)
-        try:
-            async with self._semaphore:
-                project_id = task_row["project_id"]
-                tier = ModelTier(task_row["model_tier"])
-
-                # Mark as running
-                now = time.time()
-                await self._db.execute_write(
-                    "UPDATE tasks SET status = ?, started_at = ?, updated_at = ? WHERE id = ?",
-                    (TaskStatus.RUNNING, now, now, task_id),
-                )
-                await self._progress.push_event(
-                    project_id, "task_start", task_row["title"], task_id=task_id
-                )
-
-                try:
-                    if tier == ModelTier.OLLAMA:
-                        result = await self._run_ollama_task(task_row)
-                    else:
-                        result = await self._run_claude_task(task_row, est_cost)
-
-                    # Mark completed, clean up retry tracking
-                    self._retry_after.pop(task_id, None)
-                    await self._db.execute_write(
-                        "UPDATE tasks SET status = ?, output_text = ?, "
-                        "prompt_tokens = ?, completion_tokens = ?, cost_usd = ?, "
-                        "model_used = ?, completed_at = ?, updated_at = ? WHERE id = ?",
-                        (
-                            TaskStatus.COMPLETED, result["output"],
-                            result["prompt_tokens"], result["completion_tokens"],
-                            result["cost_usd"], result["model_used"],
-                            time.time(), time.time(), task_id,
-                        ),
-                    )
-
-                    # Optional output verification (skip for Ollama — free tasks)
-                    if VERIFICATION_ENABLED and tier != ModelTier.OLLAMA and self._client:
-                        verification_overridden = await self._verify_task_output(
-                            task_row, result["output"], project_id, task_id,
-                        )
-                        if verification_overridden:
-                            return  # Task was reset to PENDING or NEEDS_REVIEW
-
-                    await self._progress.push_event(
-                        project_id, "task_complete", task_row["title"],
-                        task_id=task_id, cost_usd=result["cost_usd"],
-                    )
-
-                    # Forward output to dependent tasks' context
-                    await self._forward_context(task_row, result["output"])
-
-                except _TRANSIENT_ERRORS as e:
-                    retry_count = task_row["retry_count"]
-                    max_retries = task_row["max_retries"]
-                    if retry_count < max_retries:
-                        # Schedule retry via _retry_after instead of sleeping
-                        # inside the semaphore. The tick loop will re-dispatch
-                        # once the backoff period expires.
-                        delay = min(5 * (2 ** retry_count) + random.uniform(0, 2), 120)
-                        self._retry_after[task_id] = time.time() + delay
-                        await self._db.execute_write(
-                            "UPDATE tasks SET status = ?, retry_count = retry_count + 1, "
-                            "error = ?, updated_at = ? WHERE id = ?",
-                            (TaskStatus.PENDING, f"Transient error (retry {retry_count + 1}): {e}",
-                             time.time(), task_id),
-                        )
-                        await self._progress.push_event(
-                            project_id, "task_retry",
-                            f"{task_row['title']}: retrying in {delay:.0f}s ({e})",
-                            task_id=task_id,
-                        )
-                    else:
-                        self._retry_after.pop(task_id, None)
-                        error_msg = f"Max retries exceeded: {e}"
-
-                        if CHECKPOINT_ON_RETRY_EXHAUSTED:
-                            await self._create_checkpoint(
-                                project_id, task_id, task_row, error_msg,
-                            )
-                        else:
-                            await self._db.execute_write(
-                                "UPDATE tasks SET status = ?, error = ?, updated_at = ? WHERE id = ?",
-                                (TaskStatus.FAILED, error_msg, time.time(), task_id),
-                            )
-                            await self._progress.push_event(
-                                project_id, "task_failed", f"{task_row['title']}: {error_msg}",
-                                task_id=task_id,
-                            )
-
-                except Exception as e:
-                    self._retry_after.pop(task_id, None)
-                    error_msg = str(e)
-                    await self._db.execute_write(
-                        "UPDATE tasks SET status = ?, error = ?, updated_at = ? WHERE id = ?",
-                        (TaskStatus.FAILED, error_msg, time.time(), task_id),
-                    )
-                    await self._progress.push_event(
-                        project_id, "task_failed", f"{task_row['title']}: {error_msg}",
-                        task_id=task_id,
-                    )
-        finally:
-            set_task_id(None)
-            self._dispatched.discard(task_id)
-            if est_cost > 0:
-                await self._budget.release_reservation(est_cost)
-
-    async def _run_claude_task(self, task_row, est_cost: float = 0.0) -> dict:
-        """Execute a task via the Claude API with tool support.
-
-        Args:
-            est_cost: The original reserved cost estimate. Used for mid-loop
-                budget checks — if actual spend exceeds the estimate, we verify
-                the global budget hasn't been exhausted before continuing.
-        """
-        tier = ModelTier(task_row["model_tier"])
-        model_id = get_model_id(tier)
-        task_id = task_row["id"]
-        project_id = task_row["project_id"]
-
-        # Build context
-        context = json.loads(task_row["context_json"]) if task_row["context_json"] else []
-        system_parts = [task_row["system_prompt"] or "You are a focused task executor."]
-        for ctx in context:
-            system_parts.append(f"\n[{ctx.get('type', 'context')}]\n{ctx.get('content', '')}")
-        system_prompt = "\n".join(system_parts)
-
-        # Build tool definitions
-        tool_names = json.loads(task_row["tools_json"]) if task_row["tools_json"] else []
-        tools = self._tool_registry.get_many(tool_names)
-        tool_defs = [t.to_claude_tool() for t in tools]
-        tool_map = {t.name: t for t in tools}
-
-        # Initial message
-        messages = [{"role": "user", "content": task_row["description"]}]
-
-        client = self._client
-        if client is None:
-            raise RuntimeError("Executor not started — call start() before dispatching tasks")
-
-        total_prompt = 0
-        total_completion = 0
-        total_cost = 0.0
-        text_parts: list[str] = []
-        budget_exhausted = False
-
-        for round_num in range(MAX_TOOL_ROUNDS):
-            # Make API call
-            kwargs = {
-                "model": model_id,
-                "max_tokens": task_row["max_tokens"],
-                "system": system_prompt,
-                "messages": messages,
-                "timeout": API_TIMEOUT,
-            }
-            if tool_defs:
-                kwargs["tools"] = tool_defs
-
-            response = await client.messages.create(**kwargs)
-
-            # Record usage
-            pt = response.usage.input_tokens
-            ct = response.usage.output_tokens
-            cost = calculate_cost(model_id, pt, ct)
-            total_prompt += pt
-            total_completion += ct
-            total_cost += cost
-
-            await self._budget.record_spend(
-                cost_usd=cost,
-                prompt_tokens=pt,
-                completion_tokens=ct,
-                provider="anthropic",
-                model=model_id,
-                purpose="execution",
-                project_id=project_id,
-                task_id=task_id,
-            )
-
-            # Per-round budget check: if actual cost exceeded the original estimate,
-            # verify that global budget hasn't been exhausted before continuing.
-            if total_cost > est_cost and not await self._budget.can_spend(0.001):
-                logger.warning(
-                    "Budget exhausted mid-tool-loop for task %s after %d rounds, "
-                    "returning partial result",
-                    task_id, round_num + 1,
-                )
-                budget_exhausted = True
-
-            # Process response
-            has_tool_use = False
-            tool_results = []
-
-            for block in response.content:
-                if block.type == "text":
-                    text_parts.append(block.text)
-                elif block.type == "tool_use":
-                    has_tool_use = True
-                    tool_name = block.name
-                    tool_input = block.input
-
-                    await self._progress.push_event(
-                        project_id, "tool_call", f"Calling {tool_name}",
-                        task_id=task_id, tool=tool_name,
-                    )
-
-                    # Auto-inject project_id for file tools
-                    if tool_name in ("read_file", "write_file"):
-                        tool_input["project_id"] = project_id
-
-                    # Execute tool
-                    tool = tool_map.get(tool_name)
-                    if tool:
-                        try:
-                            result = await tool.execute(tool_input)
-                        except Exception as e:
-                            result = f"Tool error: {e}"
-                    else:
-                        result = f"Unknown tool: {tool_name}"
-
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": result,
-                    })
-
-            if not has_tool_use or budget_exhausted:
-                break
-
-            # Feed tool results back
-            messages.append({"role": "assistant", "content": response.content})
-            messages.append({"role": "user", "content": tool_results})
-
-        return {
-            "output": "\n".join(text_parts),
-            "prompt_tokens": total_prompt,
-            "completion_tokens": total_completion,
-            "cost_usd": round(total_cost, 6),
-            "model_used": model_id,
-        }
-
-    async def _run_ollama_task(self, task_row) -> dict:
-        """Execute a task via local Ollama (free)."""
-        model = OLLAMA_DEFAULT_MODEL
-        host_url = OLLAMA_HOSTS.get("local", "http://localhost:11434")
-
-        # Build context
-        context = json.loads(task_row["context_json"]) if task_row["context_json"] else []
-        system_parts = [task_row["system_prompt"] or "You are a focused task executor."]
-        for ctx in context:
-            system_parts.append(f"\n[{ctx.get('type', 'context')}]\n{ctx.get('content', '')}")
-        system_prompt = "\n".join(system_parts)
-
-        body = {
-            "model": model,
-            "prompt": task_row["description"],
-            "system": system_prompt,
-            "stream": False,
-        }
-
-        client = self._http or httpx.AsyncClient(timeout=OLLAMA_GENERATE_TIMEOUT)
-        try:
-            resp = await client.post(
-                f"{host_url}/api/generate", json=body, timeout=OLLAMA_GENERATE_TIMEOUT
-            )
-        finally:
-            if not self._http:
-                await client.aclose()
-        resp.raise_for_status()
-        data = resp.json()
-
-        output = data.get("response", "")
-        # Ollama provides token counts in some versions
-        prompt_tokens = data.get("prompt_eval_count", 0)
-        completion_tokens = data.get("eval_count", 0)
-
-        # Record usage (cost = 0 for Ollama)
-        await self._budget.record_spend(
-            cost_usd=0.0,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            provider="ollama",
-            model=model,
-            purpose="execution",
-            project_id=task_row["project_id"],
-            task_id=task_row["id"],
-        )
-
-        return {
-            "output": output,
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "cost_usd": 0.0,
-            "model_used": model,
-        }

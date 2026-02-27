@@ -1,10 +1,16 @@
 // Orchestration Engine - Task Detail Page
+//
+// Depends on: api/client.ts, api/projects.ts, hooks/useFetch.ts,
+//             components/CopyButton.tsx, components/Modal.tsx
+// Used by:    App.tsx
 
 import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { apiFetch } from '../api/client'
+import { apiFetch, apiPatch, apiPost } from '../api/client'
 import { reviewTask } from '../api/projects'
 import { useFetch } from '../hooks/useFetch'
+import CopyButton from '../components/CopyButton'
+import Modal from '../components/Modal'
 import type { Task } from '../types'
 
 export default function TaskDetail() {
@@ -16,6 +22,11 @@ export default function TaskDetail() {
   const [feedback, setFeedback] = useState('')
   const [actionLoading, setActionLoading] = useState('')
   const [actionError, setActionError] = useState('')
+
+  // Edit & Retry modal state
+  const [editOpen, setEditOpen] = useState(false)
+  const [editTitle, setEditTitle] = useState('')
+  const [editDesc, setEditDesc] = useState('')
 
   if (!id || !taskId) return <div className="text-dim">Invalid URL — missing project or task ID.</div>
   if (error) return <div className="card" style={{ borderColor: 'var(--error)' }}>Error loading task: {error}</div>
@@ -34,12 +45,45 @@ export default function TaskDetail() {
     setActionLoading('')
   }
 
+  const handleEditRetry = async () => {
+    setActionLoading('edit')
+    setActionError('')
+    try {
+      const updates: Record<string, string> = {}
+      if (editTitle !== task.title) updates.title = editTitle
+      if (editDesc !== task.description) updates.description = editDesc
+      if (Object.keys(updates).length > 0) {
+        await apiPatch(`/tasks/${taskId}`, updates)
+      }
+      if (task.status === 'failed') {
+        await apiPost(`/tasks/${taskId}/retry`)
+      }
+      setEditOpen(false)
+      refetch()
+    } catch (e) {
+      setActionError(String(e))
+    }
+    setActionLoading('')
+  }
+
+  const canEditRetry = ['failed', 'pending', 'blocked'].includes(task.status)
+
   return (
     <>
       <Link to={`/project/${id}`} className="text-dim text-sm">&larr; Back to project</Link>
       <div className="flex-between mb-2">
         <h2>{task.title}</h2>
-        <span className={`badge ${task.status}`}>{task.status}</span>
+        <div className="flex gap-1">
+          {canEditRetry && (
+            <button className="btn btn-secondary btn-sm" onClick={() => {
+              setEditTitle(task.title)
+              setEditDesc(task.description)
+              setActionError('')
+              setEditOpen(true)
+            }}>Edit &amp; Retry</button>
+          )}
+          <span className={`badge ${task.status}`}>{task.status}</span>
+        </div>
       </div>
 
       <div className="grid grid-4 mb-2">
@@ -119,17 +163,43 @@ export default function TaskDetail() {
 
       {task.error && (
         <div className="card mb-2" style={{ borderColor: 'var(--error)' }}>
-          <h3>Error</h3>
+          <div className="flex-between">
+            <h3>Error</h3>
+            <CopyButton text={task.error} label="Copy Error" />
+          </div>
           <pre>{task.error}</pre>
         </div>
       )}
 
       {task.output_text && (
         <div className="card">
-          <h3>Output</h3>
+          <div className="flex-between">
+            <h3>Output</h3>
+            <CopyButton text={task.output_text} label="Copy Output" />
+          </div>
           <pre style={{ maxHeight: '60vh', overflowY: 'auto' }}>{task.output_text}</pre>
         </div>
       )}
+
+      {/* Edit & Retry modal */}
+      <Modal open={editOpen} onClose={() => setEditOpen(false)} title="Edit Task">
+        <div className="form-group">
+          <label>Title</label>
+          <input value={editTitle} onChange={e => setEditTitle(e.target.value)} />
+        </div>
+        <div className="form-group">
+          <label>Description</label>
+          <textarea value={editDesc} onChange={e => setEditDesc(e.target.value)}
+            style={{ minHeight: '120px' }} />
+        </div>
+        {actionError && <div className="text-sm mb-1" style={{ color: 'var(--error)' }}>{actionError}</div>}
+        <div className="flex gap-1">
+          <button className="btn btn-primary" disabled={!!actionLoading} onClick={handleEditRetry}>
+            {actionLoading === 'edit' ? 'Saving...' : (task.status === 'failed' ? 'Save & Retry' : 'Save')}
+          </button>
+          <button className="btn btn-secondary" onClick={() => setEditOpen(false)}>Cancel</button>
+        </div>
+      </Modal>
     </>
   )
 }

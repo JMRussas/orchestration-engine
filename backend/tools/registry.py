@@ -26,9 +26,10 @@ class ToolRegistry:
     across all HTTP-based tools.
     """
 
-    def __init__(self, http_client: httpx.AsyncClient | None = None):
+    def __init__(self, http_client: httpx.AsyncClient | None = None, rag_cache=None):
         self._tools: dict[str, Tool] = {}
         self._http_client = http_client
+        self._rag_cache = rag_cache
         self._failed: list[str] = []
         self._register_defaults()
 
@@ -39,24 +40,24 @@ class ToolRegistry:
         (e.g., missing numpy) only takes down its own tools, not all of them.
         """
         # Shared RAG index cache — both search and lookup share the same indexes.
-        # Created lazily on first RAG tool registration so a broken RAG module
-        # doesn't prevent non-RAG tools from loading.
-        rag_cache = None
+        # Can be injected via constructor (for DI) or created lazily on first use.
+        rag_cache = self._rag_cache
 
-        def _rag_cache():
+        def _get_rag_cache():
             nonlocal rag_cache
             if rag_cache is None:
                 from backend.tools.rag import RAGIndexCache
                 rag_cache = RAGIndexCache()
+                self._rag_cache = rag_cache
             return rag_cache
 
         def _search_knowledge():
             from backend.tools.rag import SearchKnowledgeTool
-            return SearchKnowledgeTool(cache=_rag_cache(), http_client=self._http_client)
+            return SearchKnowledgeTool(cache=_get_rag_cache(), http_client=self._http_client)
 
         def _lookup_type():
             from backend.tools.rag import LookupTypeTool
-            return LookupTypeTool(cache=_rag_cache())
+            return LookupTypeTool(cache=_get_rag_cache())
 
         def _local_llm():
             from backend.tools.ollama import LocalLLMTool
