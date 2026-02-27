@@ -19,7 +19,6 @@ from backend.db.connection import Database
 from backend.exceptions import (
     BudgetExhaustedError,
     CycleDetectedError,
-    InvalidStateError,
     NotFoundError,
     OrchestrationError,
     PlanParseError,

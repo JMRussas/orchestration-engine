@@ -11,7 +11,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect
 
 logger = logging.getLogger("orchestration.migrate")
 
@@ -35,7 +35,7 @@ def run_migrations(db_path: str | Path) -> None:
 
     engine = create_engine(url)
     try:
-        with engine.connect() as conn:
+        with engine.connect():
             inspector = inspect(engine)
             tables = inspector.get_table_names()
 

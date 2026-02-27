@@ -5,9 +5,7 @@
 #  Depends on: backend/routes/usage.py, tests/conftest.py
 #  Used by:    pytest
 
-import time
 
-import pytest
 
 
 class TestUsageSummary:

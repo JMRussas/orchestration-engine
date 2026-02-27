@@ -287,14 +287,12 @@ class TestRAGIndexErrorRecovery:
 
     def test_load_acquires_lock(self):
         """load() should hold the lock, preventing concurrent query_sync."""
-        import threading
         from backend.tools.rag import _RAGIndex
         idx = _RAGIndex("/nonexistent/path.db", 768)
 
         # If load holds the lock, query_sync should block.
         # We can verify by checking the lock is held during load
         # using a mock that wraps the lock's context manager.
-        lock_was_held = []
         original_load = idx.load
 
         def checking_load():

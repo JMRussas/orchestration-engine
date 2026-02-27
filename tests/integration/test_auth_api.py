@@ -5,7 +5,6 @@
 #  Depends on: backend/routes/auth.py, tests/conftest.py
 #  Used by:    pytest
 
-import pytest
 
 
 class TestRegisterAPI:

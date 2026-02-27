@@ -8,7 +8,6 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
-import pytest
 
 from backend.tools.ollama import LocalLLMTool
 

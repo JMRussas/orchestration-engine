@@ -12,15 +12,12 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
-import pytest
 
 from backend.tools.rag import (
-    RAGIndexCache,
     SearchKnowledgeTool,
     LookupTypeTool,
     _RAGIndex,
     _embed_query,
-    _sanitize_fts_query,
 )
 
 
@@ -115,7 +112,7 @@ class TestRAGIndex:
         idx._failed_at = time.time() - 61
 
         # Now create the DB at the path so retry succeeds
-        path = _make_rag_db(tmp_path, name="nonexistent.db")
+        _make_rag_db(tmp_path, name="nonexistent.db")
         idx.load()
         assert idx._state == "loaded"
 

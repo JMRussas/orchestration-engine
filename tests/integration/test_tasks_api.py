@@ -8,7 +8,6 @@
 import json
 import time
 
-import pytest
 
 
 async def _seed_project_with_tasks(client, db):

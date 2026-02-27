@@ -8,7 +8,6 @@
 import asyncio
 import json
 
-import pytest
 
 from backend.services.progress import ProgressManager
 

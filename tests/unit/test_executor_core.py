@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.models.enums import ModelTier, ProjectStatus, TaskStatus
+from backend.models.enums import ProjectStatus, TaskStatus
 from backend.services.executor import Executor
 from backend.services.claude_agent import run_claude_task
 from backend.services.ollama_agent import run_ollama_task
@@ -215,7 +215,7 @@ class TestRunClaudeTask:
         mock_client.messages.create = AsyncMock(side_effect=[tool_response, text_response])
 
         task_row = _make_task_row()
-        result = await run_claude_task(
+        await run_claude_task(
             task_row=task_row, est_cost=0.01, client=mock_client,
             tool_registry=executor_with_db._tool_registry,
             budget=executor_with_db._budget, progress=executor_with_db._progress,
@@ -248,7 +248,7 @@ class TestRunClaudeTask:
         mock_client.messages.create = AsyncMock(return_value=tool_response)
 
         task_row = _make_task_row()
-        result = await run_claude_task(
+        await run_claude_task(
             task_row=task_row, est_cost=0.01, client=mock_client,
             tool_registry=executor_with_db._tool_registry,
             budget=executor_with_db._budget, progress=executor_with_db._progress,

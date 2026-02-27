@@ -5,7 +5,6 @@
 #  Depends on: backend/tools/rag.py
 #  Used by:    pytest
 
-import pytest
 
 from backend.tools.rag import _sanitize_fts_query
 

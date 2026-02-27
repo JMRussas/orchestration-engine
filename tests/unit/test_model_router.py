@@ -6,7 +6,6 @@
 #  Depends on: backend/services/model_router.py, backend/models/enums.py
 #  Used by:    pytest
 
-import pytest
 from unittest.mock import patch
 
 from backend.models.enums import ModelTier

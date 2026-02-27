@@ -5,7 +5,6 @@
 #  Depends on: backend/tools/registry.py
 #  Used by:    pytest
 
-import pytest
 from unittest.mock import patch
 
 from backend.tools.registry import ToolRegistry

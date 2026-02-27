@@ -7,7 +7,6 @@
 
 import asyncio
 
-import pytest
 from unittest.mock import patch
 
 from backend.services.auth import AuthService

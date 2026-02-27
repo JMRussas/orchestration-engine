@@ -17,8 +17,6 @@ from typing import Literal
 import httpx
 import numpy as np
 
-logger = logging.getLogger("orchestration.tools.rag")
-
 from backend.config import (
     OLLAMA_EMBED_MODEL,
     OLLAMA_EMBED_TIMEOUT,
@@ -27,6 +25,8 @@ from backend.config import (
     RAG_EMBED_DIMENSIONS,
 )
 from backend.tools.base import Tool
+
+logger = logging.getLogger("orchestration.tools.rag")
 
 # Cooldown before retrying a failed index load (seconds)
 _LOAD_RETRY_COOLDOWN = 60

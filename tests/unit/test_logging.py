@@ -8,7 +8,6 @@
 import json
 import logging
 
-import pytest
 
 from backend.logging_config import (
     JSONFormatter,

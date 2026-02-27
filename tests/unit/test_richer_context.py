@@ -9,7 +9,6 @@
 import json
 import time
 
-import pytest
 
 from backend.services.decomposer import decompose_plan
 

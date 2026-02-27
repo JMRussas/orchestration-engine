@@ -6,7 +6,6 @@
 #  Depends on: backend/routes/projects.py, backend/routes/tasks.py, tests/conftest.py
 #  Used by:    pytest
 
-import pytest
 
 
 async def _register_and_login(client, email, password="password123"):
@@ -35,7 +34,6 @@ class TestProjectOwnership:
             "name": "A's Project", "requirements": "r",
         }, headers=headers_a)
         assert resp.status_code == 201
-        pid_a = resp.json()["id"]
 
         # B creates a project
         resp = await app_client.post("/api/projects", json={
@@ -61,7 +59,6 @@ class TestProjectOwnership:
         resp = await app_client.post("/api/projects", json={
             "name": "A's", "requirements": "r",
         }, headers=headers_a)
-        pid_a = resp.json()["id"]
 
         # B cannot access A's project (A is admin, but B is not)
         # Actually A is admin so let's test B's project from a third user
@@ -77,7 +74,7 @@ class TestProjectOwnership:
         assert resp.status_code == 403
 
     async def test_user_cannot_delete_other_users_project(self, app_client):
-        headers_a = await _register_and_login(app_client, "a@test.com")
+        await _register_and_login(app_client, "a@test.com")
         headers_b = await _register_and_login(app_client, "b@test.com")
 
         resp = await app_client.post("/api/projects", json={

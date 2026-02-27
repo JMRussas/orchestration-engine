@@ -6,9 +6,8 @@
 #  Depends on: backend/app.py
 #  Used by:    pytest
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
-import pytest
 from fastapi import Request
 from slowapi.errors import RateLimitExceeded
 

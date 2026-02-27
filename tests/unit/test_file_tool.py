@@ -6,7 +6,6 @@
 #  Used by:    pytest
 
 import pytest
-from pathlib import Path
 from unittest.mock import patch
 
 
@@ -22,7 +21,7 @@ def sandbox(tmp_path):
 
 # Import _safe_path after patching would be too late for module-level,
 # so import normally and rely on the patch in each test.
-from backend.tools.file import _safe_path, ReadFileTool, WriteFileTool
+from backend.tools.file import _safe_path, ReadFileTool, WriteFileTool  # noqa: E402
 
 
 class TestSafePath:

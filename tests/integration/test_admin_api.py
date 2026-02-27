@@ -5,8 +5,6 @@
 #  Depends on: backend/routes/admin.py, tests/conftest.py
 #  Used by:    pytest
 
-import json
-import time
 
 
 async def _register_user(client, email, password="testpass123", display_name="User"):
@@ -38,8 +36,6 @@ async def _get_admin_client(app_client, tmp_db):
 
 async def _get_non_admin_client(app_client):
     """Register a second (non-admin) user and return their token."""
-    from httpx import ASGITransport, AsyncClient
-    from backend.app import app
 
     # Register second user (non-admin)
     resp = await app_client.post("/api/auth/register", json={

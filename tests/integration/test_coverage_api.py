@@ -8,7 +8,6 @@
 import json
 import time
 
-import pytest
 
 from backend.models.enums import TaskStatus
 

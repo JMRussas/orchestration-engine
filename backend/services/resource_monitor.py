@@ -14,8 +14,6 @@ from urllib.parse import urlparse
 
 import httpx
 
-logger = logging.getLogger("orchestration.resource_monitor")
-
 from backend.config import (
     ANTHROPIC_API_KEY,
     COMFYUI_HOSTS,
@@ -23,6 +21,8 @@ from backend.config import (
     RESOURCE_CHECK_INTERVAL,
 )
 from backend.models.enums import ResourceStatus
+
+logger = logging.getLogger("orchestration.resource_monitor")
 
 
 @dataclass

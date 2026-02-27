@@ -5,7 +5,6 @@
 #  Depends on: backend/routes/projects.py, tests/conftest.py
 #  Used by:    pytest
 
-import pytest
 
 
 class TestCreateProject:

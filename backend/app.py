@@ -14,26 +14,26 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from backend.logging_config import set_request_id
-
-logger = logging.getLogger("orchestration.app")
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 
 from backend.config import CORS_ORIGINS, DB_PATH, PROJECT_ROOT, validate_config
 from backend.container import Container
-from backend.rate_limit import limiter
+from backend.logging_config import set_request_id
 from backend.middleware.auth import get_current_user
-from backend.routes.auth import router as auth_router
-from backend.routes.projects import router as projects_router
-from backend.routes.services import health_router, router as services_router
-from backend.routes.events import router as events_router
-from backend.routes.tasks import router as tasks_router
-from backend.routes.checkpoints import router as checkpoints_router
+from backend.rate_limit import limiter
 from backend.routes.admin import router as admin_router
+from backend.routes.auth import router as auth_router
+from backend.routes.checkpoints import router as checkpoints_router
+from backend.routes.events import router as events_router
+from backend.routes.projects import router as projects_router
 from backend.routes.rag import router as rag_router
+from backend.routes.services import health_router, router as services_router
+from backend.routes.tasks import router as tasks_router
 from backend.routes.usage import router as usage_router
+
+logger = logging.getLogger("orchestration.app")
 
 # Create and wire the DI container
 container = Container()

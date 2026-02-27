@@ -43,8 +43,6 @@ class TestProgressSubscribe:
         pm = ProgressManager(db=tmp_db)
 
         # Patch the timeout to be very short so test doesn't wait 30s
-        original_subscribe = pm.subscribe
-
         async def fast_subscribe(project_id):
             queue = asyncio.Queue(maxsize=100)
             pm._subscribers.setdefault(project_id, []).append(queue)

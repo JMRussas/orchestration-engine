@@ -7,11 +7,8 @@
 
 import json
 import time
-from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
-from backend.models.enums import ProjectStatus, TaskStatus
 from backend.services.decomposer import decompose_plan
 from backend.services.task_lifecycle import forward_context
 

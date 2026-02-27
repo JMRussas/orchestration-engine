@@ -9,9 +9,8 @@
 import json
 import time
 
-import pytest
 
-from backend.models.enums import ProjectStatus, TaskStatus
+from backend.models.enums import TaskStatus
 from backend.services.decomposer import _compute_waves, decompose_plan
 
 

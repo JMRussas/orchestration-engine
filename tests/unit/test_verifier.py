@@ -8,7 +8,6 @@
 import json
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
 from backend.models.enums import VerificationResult
 from backend.services.verifier import verify_output
@@ -133,7 +132,7 @@ class TestVerifyOutput:
         budget = AsyncMock()
         budget.record_spend = AsyncMock()
 
-        result = await verify_output(
+        await verify_output(
             task_title="Test",
             task_description="Test task",
             output_text="",

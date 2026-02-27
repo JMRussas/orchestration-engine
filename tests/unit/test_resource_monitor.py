@@ -9,13 +9,11 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
-import pytest
 
 from backend.models.enums import ResourceStatus
 from backend.services.resource_monitor import (
     ResourceDef,
     ResourceMonitor,
-    ResourceState,
     _check_http,
     _check_resource,
     _check_tcp,

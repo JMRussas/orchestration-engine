@@ -103,7 +103,7 @@ class GenerateImageTool(Tool):
                                 filename = img.get("filename", "")
                                 images.append(f"{host_url}/view?filename={filename}")
                         if images:
-                            return f"Image generated successfully.\nURLs:\n" + "\n".join(images)
+                            return "Image generated successfully.\nURLs:\n" + "\n".join(images)
                         return "Workflow completed but no images found in output."
 
             return f"Error: ComfyUI timed out after {COMFY_TIMEOUT}s"
