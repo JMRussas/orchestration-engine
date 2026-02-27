@@ -89,7 +89,7 @@ export default function ProjectDetail() {
   }
 
   const handleRigorChange = async (newRigor: PlanningRigor) => {
-    await action('rigor', () => updateProject(id!, { config: { planning_rigor: newRigor } }))
+    await action('rigor', () => updateProject(id!, { planning_rigor: newRigor }))
   }
 
   if (!id) return <div className="text-dim">Invalid URL — missing project ID.</div>
@@ -246,7 +246,7 @@ export default function ProjectDetail() {
             <div style={{ marginTop: '0.75rem' }}>
               <h4 className="text-sm text-dim mb-1">Test Strategy</h4>
               <div className="text-sm">{latestPlan.plan.test_strategy.approach}</div>
-              {latestPlan.plan.test_strategy.test_tasks.length > 0 && (
+              {latestPlan.plan.test_strategy.test_tasks && latestPlan.plan.test_strategy.test_tasks.length > 0 && (
                 <ul className="text-sm text-dim" style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
                   {latestPlan.plan.test_strategy.test_tasks.map((t, i) => (
                     <li key={i}>{t}</li>

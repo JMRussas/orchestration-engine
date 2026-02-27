@@ -30,6 +30,8 @@ def _flatten_plan_tasks(plan_data: dict) -> tuple[list[dict], list[str | None]]:
         tasks_data: list[dict] = []
         phase_names: list[str | None] = []
         for phase in phases:
+            if not isinstance(phase, dict):
+                continue
             phase_name = phase.get("name", "Unnamed Phase")
             for task in phase.get("tasks", []):
                 tasks_data.append(task)

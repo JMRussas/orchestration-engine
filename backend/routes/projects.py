@@ -196,14 +196,17 @@ async def update_project(
     if body.requirements is not None:
         updates.append("requirements = ?")
         params.append(body.requirements)
-    if body.config is not None:
+    if body.config is not None or body.planning_rigor is not None:
+        # Start from body.config if provided, else existing config
+        if body.config is not None:
+            merged_config = dict(body.config)
+        else:
+            merged_config = json.loads(row["config_json"]) if row["config_json"] else {}
+        # Overlay planning_rigor if explicitly set
+        if body.planning_rigor is not None:
+            merged_config["planning_rigor"] = body.planning_rigor.value
         updates.append("config_json = ?")
-        params.append(json.dumps(body.config))
-    if body.planning_rigor is not None:
-        existing_config = json.loads(row["config_json"]) if row["config_json"] else {}
-        existing_config["planning_rigor"] = body.planning_rigor.value
-        updates.append("config_json = ?")
-        params.append(json.dumps(existing_config))
+        params.append(json.dumps(merged_config))
 
     if not updates:
         raise HTTPException(400, "No fields to update")

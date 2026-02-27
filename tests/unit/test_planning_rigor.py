@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.models.enums import PlanningRigor, TaskStatus
+from backend.models.enums import PlanningRigor
 from backend.services.planner import (
     PlannerService,
     _build_system_prompt,
@@ -381,3 +381,40 @@ class TestDecomposerWithPhases:
 
         task_c = await db.fetchone("SELECT wave FROM tasks WHERE id = ?", (task_ids[2],))
         assert task_c["wave"] == 1  # Depends on A
+
+
+# ---------------------------------------------------------------------------
+# Edge cases for _flatten_plan_tasks
+# ---------------------------------------------------------------------------
+
+class TestFlattenPlanTasksEdgeCases:
+
+    def test_non_dict_phase_entries_are_skipped(self):
+        """If Claude returns a non-dict in phases list, skip it gracefully."""
+        plan = {
+            "summary": "Bad phases",
+            "phases": [
+                "not a dict",
+                {"name": "Real Phase", "description": "OK", "tasks": [
+                    {"title": "A", "description": "Do A"},
+                ]},
+            ],
+        }
+        tasks, phases = _flatten_plan_tasks(plan)
+        assert len(tasks) == 1
+        assert phases == ["Real Phase"]
+
+    def test_phase_with_no_tasks_key(self):
+        """Phase dict without 'tasks' key produces no tasks from that phase."""
+        plan = {
+            "summary": "Missing tasks key",
+            "phases": [
+                {"name": "Empty", "description": "No tasks key"},
+                {"name": "Full", "description": "Has tasks", "tasks": [
+                    {"title": "A", "description": "Do A"},
+                ]},
+            ],
+        }
+        tasks, phases = _flatten_plan_tasks(plan)
+        assert len(tasks) == 1
+        assert phases == ["Full"]
