@@ -223,6 +223,19 @@ pre { background: var(--bg); padding: 0.75rem; border-radius: var(--radius); ove
   max-height: 80vh; overflow-y: auto;
 }
 
+/* Loading spinner */
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-spinner {
+  display: flex; align-items: center; justify-content: center;
+  padding: 3rem; color: var(--text-dim);
+}
+.loading-spinner::before {
+  content: ''; display: inline-block; width: 1.5rem; height: 1.5rem;
+  border: 2px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin 0.8s linear infinite;
+  margin-right: 0.75rem;
+}
+
 /* Light theme */
 [data-theme="light"] {
   --bg: #f5f6fa;

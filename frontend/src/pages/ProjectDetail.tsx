@@ -87,7 +87,7 @@ export default function ProjectDetail() {
 
   if (!id) return <div className="text-dim">Invalid URL — missing project ID.</div>
   if (error && !project) return <div className="card" style={{ borderColor: 'var(--error)' }}>Error: {error}</div>
-  if (!project) return <div className="text-dim">Loading...</div>
+  if (!project) return <div className="loading-spinner">Loading project...</div>
 
   const latestPlan = plans[0]
   const draftPlan = plans.find(p => p.status === 'draft')

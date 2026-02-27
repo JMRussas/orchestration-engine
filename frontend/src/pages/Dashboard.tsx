@@ -22,7 +22,7 @@ export default function Dashboard() {
   const [error, setError] = useState('')
   const navigate = useNavigate()
 
-  const { data, error: fetchError } = useFetch<DashboardData>(
+  const { data, loading: fetchLoading, error: fetchError } = useFetch<DashboardData>(
     () => Promise.all([
       listProjects(),
       getBudget().catch(() => null),
@@ -114,15 +114,23 @@ export default function Dashboard() {
         )}
         <div className="card">
           <h3>Services</h3>
-          <div className="flex gap-1" style={{ flexWrap: 'wrap' }}>
-            {services.map(s => (
-              <span key={s.id} className={`badge ${s.status}`}>{s.name.split(' (')[0]}</span>
-            ))}
-          </div>
+          {fetchLoading && !data ? (
+            <span className="text-dim text-sm">Checking...</span>
+          ) : services.length === 0 ? (
+            <span className="text-dim text-sm">No services configured</span>
+          ) : (
+            <div className="flex gap-1" style={{ flexWrap: 'wrap' }}>
+              {services.map(s => (
+                <span key={s.id} className={`badge ${s.status}`}>{s.name.split(' (')[0]}</span>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
-      {projects.length === 0 ? (
+      {fetchLoading && !data ? (
+        <div className="loading-spinner">Loading projects...</div>
+      ) : projects.length === 0 ? (
         <div className="card text-dim">No projects yet. Create one to get started.</div>
       ) : (
         <table>

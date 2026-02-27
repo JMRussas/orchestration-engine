@@ -30,7 +30,7 @@ export default function TaskDetail() {
 
   if (!id || !taskId) return <div className="text-dim">Invalid URL — missing project or task ID.</div>
   if (error) return <div className="card" style={{ borderColor: 'var(--error)' }}>Error loading task: {error}</div>
-  if (!task) return <div className="text-dim">Loading...</div>
+  if (!task) return <div className="loading-spinner">Loading task...</div>
 
   const handleReview = async (action: 'approve' | 'retry') => {
     setActionLoading(action)
