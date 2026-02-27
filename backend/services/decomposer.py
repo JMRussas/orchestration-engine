@@ -18,6 +18,29 @@ from backend.services.model_router import estimate_task_cost, recommend_tier, re
 _EST_DECOMPOSE_INPUT_TOKENS = 1500  # system prompt + context + tools
 
 
+def _flatten_plan_tasks(plan_data: dict) -> tuple[list[dict], list[str | None]]:
+    """Extract a flat task list from either a flat or phased plan.
+
+    Returns:
+        (tasks_data, phase_names) where phase_names[i] is the phase name
+        for tasks_data[i]. For flat plans, all phase_names are None.
+    """
+    phases = plan_data.get("phases")
+    if phases and isinstance(phases, list) and len(phases) > 0:
+        tasks_data: list[dict] = []
+        phase_names: list[str | None] = []
+        for phase in phases:
+            phase_name = phase.get("name", "Unnamed Phase")
+            for task in phase.get("tasks", []):
+                tasks_data.append(task)
+                phase_names.append(phase_name)
+        return tasks_data, phase_names
+
+    # Flat plan (L1 or legacy)
+    tasks_data = plan_data.get("tasks", [])
+    return tasks_data, [None] * len(tasks_data)
+
+
 class DecomposerService:
     """Injectable service that converts plans into executable tasks."""
 
@@ -39,7 +62,7 @@ class DecomposerService:
             raise NotFoundError(f"Plan {plan_id} does not belong to project {project_id}")
 
         plan_data = json.loads(plan_row["plan_json"])
-        tasks_data = plan_data.get("tasks", [])
+        tasks_data, phase_names = _flatten_plan_tasks(plan_data)
 
         if not tasks_data:
             raise InvalidStateError("Plan has no tasks")
@@ -72,12 +95,17 @@ class DecomposerService:
             tier = recommend_tier(task_type, complexity)
             tools = task_def.get("tools_needed", recommend_tools(task_type))
 
+            phase = phase_names[i]
+
             # Build enriched context for this task
             context = [
                 {"type": "project_summary", "content": plan_data.get("summary", "")},
                 {"type": "project_requirements", "content": project_row["requirements"]},
                 {"type": "task_description", "content": description},
             ]
+
+            if phase:
+                context.append({"type": "phase", "content": phase})
 
             # Add sibling task summaries (what else is being worked on)
             siblings = []
@@ -111,11 +139,11 @@ class DecomposerService:
             write_statements.append((
                 "INSERT INTO tasks (id, project_id, plan_id, title, description, task_type, "
                 "priority, status, model_tier, context_json, tools_json, "
-                "max_tokens, wave, requirement_ids_json, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "max_tokens, wave, phase, requirement_ids_json, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (task_id, project_id, plan_id, title, description, task_type,
                  priority, TaskStatus.PENDING, tier.value, json.dumps(context),
-                 json.dumps(tools), DEFAULT_MAX_TOKENS, waves[i],
+                 json.dumps(tools), DEFAULT_MAX_TOKENS, waves[i], phase,
                  json.dumps(requirement_ids), now, now),
             ))
 

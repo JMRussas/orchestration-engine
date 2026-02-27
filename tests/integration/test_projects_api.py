@@ -26,7 +26,7 @@ class TestCreateProject:
             "config": {"key": "value"},
         })
         assert resp.status_code == 201
-        assert resp.json()["config"] == {"key": "value"}
+        assert resp.json()["config"]["key"] == "value"
 
     async def test_create_missing_name_returns_422(self, authed_client):
         resp = await authed_client.post("/api/projects", json={

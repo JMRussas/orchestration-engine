@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     retry_count INTEGER NOT NULL DEFAULT 0,
     max_retries INTEGER NOT NULL DEFAULT 2,
     wave INTEGER NOT NULL DEFAULT 0,
+    phase TEXT,
     verification_status TEXT,
     verification_notes TEXT,
     requirement_ids_json TEXT DEFAULT '[]',

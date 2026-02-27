@@ -13,12 +13,19 @@ import anthropic
 
 from backend.config import ANTHROPIC_API_KEY, API_TIMEOUT, PLANNING_MODEL
 from backend.exceptions import BudgetExhaustedError, NotFoundError, PlanParseError
-from backend.models.enums import PlanStatus, ProjectStatus
+from backend.models.enums import PlanningRigor, PlanStatus, ProjectStatus
 from backend.services.model_router import calculate_cost
 
 # Token estimates for budget reservation before API calls
 _EST_PLANNING_INPUT_TOKENS = 2000   # system prompt (~1.5k) + requirements
 _EST_PLANNING_OUTPUT_TOKENS = 2000  # plan JSON response
+
+# Max output tokens by rigor level (more structured output needs more tokens)
+_MAX_TOKENS_BY_RIGOR = {
+    PlanningRigor.L1: 4096,
+    PlanningRigor.L2: 6144,
+    PlanningRigor.L3: 8192,
+}
 
 
 def _extract_json_object(text: str) -> dict | None:
@@ -59,29 +66,15 @@ def _extract_json_object(text: str) -> dict | None:
     return None
 
 
-_PLANNING_SYSTEM = """You are a project planner for an AI orchestration engine. Your job is to analyze requirements and produce a structured execution plan.
+# ---------------------------------------------------------------------------
+# Planner system prompt: preamble (shared) + rigor-specific suffix
+# ---------------------------------------------------------------------------
+
+_PLANNING_PREAMBLE = """You are a project planner for an AI orchestration engine. Your job is to analyze requirements and produce a structured execution plan.
 
 Requirements are numbered [R1], [R2], etc. for traceability.
 
-Given a set of requirements, produce a JSON plan with this exact structure:
-{
-  "summary": "Brief summary of what will be built",
-  "tasks": [
-    {
-      "title": "Short task title",
-      "description": "Detailed description of what this task must accomplish. Be specific enough that a separate AI instance with no other context can execute it.",
-      "task_type": "code|research|analysis|asset|integration|documentation",
-      "complexity": "simple|medium|complex",
-      "depends_on": [],
-      "tools_needed": ["search_knowledge", "lookup_type", "local_llm", "generate_image", "read_file", "write_file"],
-      "requirement_ids": ["R1", "R3"],
-      "verification_criteria": "How to verify this task was completed correctly",
-      "affected_files": ["src/auth.ts", "db/schema.sql"]
-    }
-  ]
-}
-
-Guidelines:
+Task guidelines:
 - Break work into small, focused tasks. Each task should be completable in a single AI conversation.
 - Keep task descriptions self-contained — include enough context for a fresh AI instance.
 - Use "depends_on" to reference task indices (0-based) for ordering dependencies.
@@ -93,7 +86,6 @@ Guidelines:
 - Use task_type "integration" for combining outputs from other tasks.
 - Use task_type "documentation" for writing docs, READMEs, etc.
 - Order tasks so independent work can run in parallel.
-- Aim for 3-15 tasks. Too few means tasks are too large; too many means overhead.
 - Map each task to the requirement IDs it satisfies using requirement_ids.
 - Include verification_criteria: a concrete check to confirm task completion.
 - Include affected_files: list of files this task will create or modify (best guess).
@@ -106,7 +98,134 @@ Available tools each task can request:
 - read_file: Read files from the project workspace
 - write_file: Write files to the project workspace
 
+"""
+
+_TASK_SCHEMA = """{
+      "title": "Short task title",
+      "description": "Detailed description...",
+      "task_type": "code|research|analysis|asset|integration|documentation",
+      "complexity": "simple|medium|complex",
+      "depends_on": [],
+      "tools_needed": ["search_knowledge", "lookup_type", "local_llm", "generate_image", "read_file", "write_file"],
+      "requirement_ids": ["R1", "R3"],
+      "verification_criteria": "How to verify this task was completed correctly",
+      "affected_files": ["src/auth.ts", "db/schema.sql"]
+    }"""
+
+_RIGOR_SUFFIX_L1 = f"""Produce a JSON plan with this exact structure:
+{{
+  "summary": "Brief summary of what will be built",
+  "tasks": [
+    {_TASK_SCHEMA}
+  ]
+}}
+
+- Aim for 3-15 tasks. Too few means tasks are too large; too many means overhead.
+
 Respond with ONLY the JSON plan, no markdown fences or explanation."""
+
+_RIGOR_SUFFIX_L2 = f"""Produce a JSON plan organized into phases. Each phase groups related tasks into a logical stage of work.
+
+{{
+  "summary": "Brief summary of what will be built",
+  "phases": [
+    {{
+      "name": "Phase name (e.g. 'Foundation', 'Core Logic', 'Integration')",
+      "description": "What this phase accomplishes and why it comes at this point",
+      "tasks": [
+        {_TASK_SCHEMA}
+      ]
+    }}
+  ],
+  "open_questions": [
+    {{
+      "question": "An ambiguity or decision in the requirements",
+      "proposed_answer": "How you propose to handle it",
+      "impact": "What changes if the answer differs"
+    }}
+  ]
+}}
+
+Phase guidelines:
+- Group related tasks into 2-5 phases that represent logical stages of work.
+- Name phases clearly: "Research & Discovery", "Core Implementation", "Integration & Testing", etc.
+- Earlier phases should have no dependencies on later phases.
+- depends_on indices are GLOBAL across all phases (0-based from the first task in the first phase).
+- Aim for 3-15 total tasks across all phases.
+
+Open questions:
+- Surface 1-5 ambiguities, assumptions, or decisions that could affect the plan.
+- Each must include a proposed_answer so the user can approve or override quickly.
+
+Respond with ONLY the JSON plan, no markdown fences or explanation."""
+
+_RIGOR_SUFFIX_L3 = f"""Produce a thorough JSON plan organized into phases with risk analysis and test strategy.
+
+{{
+  "summary": "Brief summary of what will be built",
+  "phases": [
+    {{
+      "name": "Phase name (e.g. 'Foundation', 'Core Logic', 'Integration')",
+      "description": "What this phase accomplishes and why it comes at this point",
+      "tasks": [
+        {_TASK_SCHEMA}
+      ]
+    }}
+  ],
+  "open_questions": [
+    {{
+      "question": "An ambiguity or decision in the requirements",
+      "proposed_answer": "How you propose to handle it",
+      "impact": "What changes if the answer differs"
+    }}
+  ],
+  "risk_assessment": [
+    {{
+      "risk": "Description of a technical or schedule risk",
+      "likelihood": "low|medium|high",
+      "impact": "low|medium|high",
+      "mitigation": "How to reduce or handle this risk"
+    }}
+  ],
+  "test_strategy": {{
+    "approach": "Overall testing approach description",
+    "test_tasks": ["Task titles that represent test/verification work"],
+    "coverage_notes": "What areas need testing and how"
+  }}
+}}
+
+Phase guidelines:
+- Group related tasks into 2-5 phases that represent logical stages of work.
+- Name phases clearly: "Research & Discovery", "Core Implementation", "Integration & Testing", etc.
+- Earlier phases should have no dependencies on later phases.
+- depends_on indices are GLOBAL across all phases (0-based from the first task in the first phase).
+- Aim for 5-15 total tasks across all phases.
+
+Open questions:
+- Surface 1-5 ambiguities, assumptions, or decisions that could affect the plan.
+- Each must include a proposed_answer so the user can approve or override quickly.
+
+Risk assessment:
+- Identify 2-5 technical, integration, or scope risks.
+- Be concrete — reference specific requirements or tasks.
+
+Test strategy:
+- Describe the overall approach to verifying the work.
+- Reference specific tasks that perform testing/verification.
+- Note coverage gaps the user should be aware of.
+
+Respond with ONLY the JSON plan, no markdown fences or explanation."""
+
+_RIGOR_SUFFIXES = {
+    PlanningRigor.L1: _RIGOR_SUFFIX_L1,
+    PlanningRigor.L2: _RIGOR_SUFFIX_L2,
+    PlanningRigor.L3: _RIGOR_SUFFIX_L3,
+}
+
+
+def _build_system_prompt(rigor: PlanningRigor) -> str:
+    """Build the full system prompt for the given planning rigor level."""
+    return _PLANNING_PREAMBLE + _RIGOR_SUFFIXES[rigor]
 
 
 class PlannerService:
@@ -140,6 +259,17 @@ class PlannerService:
         requirements = row["requirements"]
         project_name = row["name"]
 
+        # Read planning rigor from project config
+        config = json.loads(row["config_json"]) if row["config_json"] else {}
+        rigor_str = config.get("planning_rigor", "L2")
+        try:
+            rigor = PlanningRigor(rigor_str)
+        except ValueError:
+            rigor = PlanningRigor.L2
+
+        system_prompt = _build_system_prompt(rigor)
+        max_tokens = _MAX_TOKENS_BY_RIGOR[rigor]
+
         # Reserve budget before making the API call (prevents TOCTOU race)
         estimated_cost = calculate_cost(PLANNING_MODEL, _EST_PLANNING_INPUT_TOKENS, _EST_PLANNING_OUTPUT_TOKENS)
         if not await budget.reserve_spend(estimated_cost):
@@ -167,8 +297,8 @@ class PlannerService:
         try:
             response = await client.messages.create(
                 model=PLANNING_MODEL,
-                max_tokens=4096,
-                system=_PLANNING_SYSTEM,
+                max_tokens=max_tokens,
+                system=system_prompt,
                 messages=[{"role": "user", "content": user_msg}],
                 timeout=API_TIMEOUT,
             )

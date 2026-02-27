@@ -6,7 +6,7 @@ import { listProjects, createProject } from '../api/projects'
 import { getBudget } from '../api/usage'
 import { listServices } from '../api/services'
 import { useFetch } from '../hooks/useFetch'
-import type { Project, BudgetStatus, Resource } from '../types'
+import type { Project, BudgetStatus, Resource, PlanningRigor } from '../types'
 
 interface DashboardData {
   projects: Project[]
@@ -18,6 +18,7 @@ export default function Dashboard() {
   const [showForm, setShowForm] = useState(false)
   const [name, setName] = useState('')
   const [requirements, setRequirements] = useState('')
+  const [rigor, setRigor] = useState<PlanningRigor>('L2')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const navigate = useNavigate()
@@ -43,7 +44,7 @@ export default function Dashboard() {
     setLoading(true)
     setError('')
     try {
-      const project = await createProject(name, requirements)
+      const project = await createProject(name, requirements, rigor)
       navigate(`/project/${project.id}`)
     } catch (e) {
       setError(String(e))
@@ -74,6 +75,14 @@ export default function Dashboard() {
             <label>Requirements</label>
             <textarea value={requirements} onChange={e => setRequirements(e.target.value)}
               placeholder="Describe what you want built..." />
+          </div>
+          <div className="form-group">
+            <label>Planning Rigor</label>
+            <select value={rigor} onChange={e => setRigor(e.target.value as PlanningRigor)}>
+              <option value="L1">L1 Quick — Flat task list</option>
+              <option value="L2">L2 Standard — Phases + open questions</option>
+              <option value="L3">L3 Thorough — Phases + risk + test strategy</option>
+            </select>
           </div>
           {error && <div className="text-sm" style={{ color: 'var(--error)', marginBottom: '0.5rem' }}>{error}</div>}
           <div className="flex gap-1">
@@ -136,13 +145,14 @@ export default function Dashboard() {
         <table>
           <thead>
             <tr>
-              <th>Name</th><th>Status</th><th>Tasks</th><th>Created</th>
+              <th>Name</th><th>Rigor</th><th>Status</th><th>Tasks</th><th>Created</th>
             </tr>
           </thead>
           <tbody>
             {projects.map(p => (
               <tr key={p.id}>
                 <td><Link to={`/project/${p.id}`}>{p.name}</Link></td>
+                <td><span className={`badge rigor-${p.planning_rigor?.toLowerCase() ?? 'l2'}`}>{p.planning_rigor ?? 'L2'}</span></td>
                 <td><span className={`badge ${p.status}`}>{p.status}</span></td>
                 <td>
                   {p.task_summary ? (

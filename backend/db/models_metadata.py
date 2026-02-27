@@ -87,6 +87,7 @@ tasks = Table(
     Column("retry_count", Integer, nullable=False, server_default="0"),
     Column("max_retries", Integer, nullable=False, server_default="2"),
     Column("wave", Integer, nullable=False, server_default="0"),
+    Column("phase", Text),
     Column("verification_status", Text),
     Column("verification_notes", Text),
     Column("requirement_ids_json", Text, server_default="[]"),

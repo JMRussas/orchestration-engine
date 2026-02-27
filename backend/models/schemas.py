@@ -9,6 +9,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from backend.models.enums import (
     ModelTier,
+    PlanningRigor,
     PlanStatus,
     ProjectStatus,
     ResourceStatus,
@@ -25,12 +26,14 @@ class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     requirements: str = Field(..., min_length=1, max_length=50_000)
     config: dict = Field(default_factory=dict)
+    planning_rigor: PlanningRigor = PlanningRigor.L2
 
 
 class ProjectUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     requirements: str | None = Field(default=None, min_length=1, max_length=50_000)
     config: dict | None = None
+    planning_rigor: PlanningRigor | None = None
 
 
 class ProjectOut(BaseModel):
@@ -42,6 +45,7 @@ class ProjectOut(BaseModel):
     updated_at: float
     completed_at: float | None = None
     config: dict = Field(default_factory=dict)
+    planning_rigor: str = "L2"
     task_summary: dict | None = None  # {total, completed, running, failed}
 
 
@@ -78,6 +82,7 @@ class TaskOut(BaseModel):
     model_tier: ModelTier
     model_used: str | None = None
     wave: int = 0
+    phase: str | None = None
     tools: list[str] = Field(default_factory=list)
     verification_status: str | None = None
     verification_notes: str | None = None

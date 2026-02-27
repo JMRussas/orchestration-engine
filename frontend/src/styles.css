@@ -224,6 +224,41 @@ pre { background: var(--bg); padding: 0.75rem; border-radius: var(--radius); ove
   max-height: 80vh; overflow-y: auto;
 }
 
+/* Rigor badges */
+.badge.rigor-l1 { background: #1b3a1b; color: var(--success); }
+.badge.rigor-l2 { background: #1b2a3a; color: var(--accent); }
+.badge.rigor-l3 { background: #3a2a1b; color: var(--warning); }
+
+.rigor-select {
+  width: auto; display: inline-block; margin-left: 0.5rem;
+  padding: 0.15rem 0.5rem; font-size: 0.75rem; font-weight: 600;
+  border-radius: 12px;
+}
+
+/* Phase headers */
+.phase-group { margin-bottom: 1rem; }
+.phase-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0.5rem 0; border-bottom: 1px solid var(--border); margin-bottom: 0.5rem;
+  cursor: pointer; user-select: none;
+}
+.phase-header h4 { font-size: 0.875rem; color: var(--accent); margin: 0; }
+.phase-header:hover h4 { color: var(--text); }
+
+/* Plan detail items */
+.plan-phase-item {
+  padding: 0.25rem 0; border-bottom: 1px solid var(--border);
+}
+.plan-phase-name { font-weight: 600; font-size: 0.875rem; }
+.plan-question-item, .plan-risk-item {
+  padding: 0.5rem 0; border-bottom: 1px solid var(--border);
+}
+
+/* Risk badges */
+.badge.risk-low { background: #1b3a1b; color: var(--success); }
+.badge.risk-medium { background: #3a2a1b; color: var(--warning); }
+.badge.risk-high { background: #3a1b1b; color: var(--error); }
+
 /* Loading spinner */
 @keyframes spin { to { transform: rotate(360deg); } }
 .loading-spinner {
@@ -275,6 +310,13 @@ pre { background: var(--bg); padding: 0.75rem; border-radius: var(--radius); ove
 [data-theme="light"] .badge.haiku { background: #f3e5f5; color: #7b1fa2; }
 [data-theme="light"] .badge.sonnet { background: #e3f2fd; color: #1565c0; }
 [data-theme="light"] .badge.opus { background: #fff3e0; color: #e65100; }
+[data-theme="light"] .badge.rigor-l1 { background: #e8f5e9; color: #2e7d32; }
+[data-theme="light"] .badge.rigor-l2 { background: #e3f2fd; color: #1565c0; }
+[data-theme="light"] .badge.rigor-l3 { background: #fff3e0; color: #e65100; }
+[data-theme="light"] .badge.risk-low { background: #e8f5e9; color: #2e7d32; }
+[data-theme="light"] .badge.risk-medium { background: #fff3e0; color: #e65100; }
+[data-theme="light"] .badge.risk-high { background: #ffebee; color: #c62828; }
+[data-theme="light"] .phase-header h4 { color: #1565c0; }
 [data-theme="light"] .auth-error { background: #ffebee; }
 [data-theme="light"] .auth-divider span { background: #fff; }
 [data-theme="light"] pre { background: #f0f1f5; }
