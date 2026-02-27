@@ -197,6 +197,8 @@ class UserOut(BaseModel):
     email: str
     display_name: str
     role: str
+    has_password: bool = True
+    linked_providers: list[str] = Field(default_factory=list)
 
 
 class LoginResponse(BaseModel):
@@ -210,6 +212,39 @@ class RefreshResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+
+
+# ---------------------------------------------------------------------------
+# OIDC
+# ---------------------------------------------------------------------------
+
+class OIDCCallbackRequest(BaseModel):
+    """OIDC authorization code callback."""
+    code: str = Field(..., min_length=1)
+    state: str = Field(..., min_length=1)
+    state_token: str = Field(..., min_length=1)
+    redirect_uri: str = Field(..., min_length=1)
+
+
+class OIDCLinkRequest(BaseModel):
+    """Link an OIDC provider to an existing account."""
+    code: str = Field(..., min_length=1)
+    state: str = Field(..., min_length=1)
+    state_token: str = Field(..., min_length=1)
+    redirect_uri: str = Field(..., min_length=1)
+
+
+class OIDCProviderInfo(BaseModel):
+    """Public info about a configured OIDC provider."""
+    name: str
+    display_name: str
+
+
+class OIDCIdentityOut(BaseModel):
+    """A linked OIDC identity for a user."""
+    provider: str
+    provider_email: str | None = None
+    created_at: float
 
 
 # ---------------------------------------------------------------------------

@@ -115,3 +115,50 @@ class TestRefresh:
         login_result = await auth_service.login("user@test.com", "password123")
         with pytest.raises(ValueError, match="not a refresh token"):
             await auth_service.refresh_tokens(login_result["access_token"])
+
+
+class TestOAuthOnlyUser:
+    async def test_register_without_password(self, auth_service):
+        user = await auth_service.register("oauth@test.com", password=None)
+        assert user["email"] == "oauth@test.com"
+        # Verify password_hash is NULL in DB
+        row = await auth_service._db.fetchone(
+            "SELECT password_hash FROM users WHERE id = ?", (user["id"],)
+        )
+        assert row["password_hash"] is None
+
+    async def test_login_oauth_only_user_rejected(self, auth_service):
+        await auth_service.register("oauth@test.com", password=None)
+        with pytest.raises(ValueError, match="OAuth login"):
+            await auth_service.login("oauth@test.com", "anypassword")
+
+    async def test_set_password_on_oauth_user(self, auth_service):
+        user = await auth_service.register("oauth@test.com", password=None)
+        await auth_service.set_password(user["id"], "newpassword123")
+        # Now login should work
+        result = await auth_service.login("oauth@test.com", "newpassword123")
+        assert result["user"]["email"] == "oauth@test.com"
+
+    async def test_get_user_includes_has_password(self, auth_service):
+        # Password user
+        pw_user = await auth_service.register("pw@test.com", "password123")
+        fetched = await auth_service.get_user(pw_user["id"])
+        assert fetched["has_password"] == 1  # SQLite returns int for expression
+
+        # OAuth-only user
+        oauth_user = await auth_service.register("oauth@test.com", password=None)
+        fetched = await auth_service.get_user(oauth_user["id"])
+        assert fetched["has_password"] == 0
+
+    async def test_get_user_includes_linked_providers(self, auth_service, tmp_db):
+        import uuid as _uuid
+        import time as _time
+        user = await auth_service.register("linked@test.com", "password123")
+        # Add an identity
+        await tmp_db.execute_write(
+            "INSERT INTO user_identities (id, user_id, provider, provider_user_id, provider_email, created_at) "
+            "VALUES (?, ?, 'google', 'gid-123', 'linked@test.com', ?)",
+            (str(_uuid.uuid4()), user["id"], _time.time()),
+        )
+        fetched = await auth_service.get_user(user["id"])
+        assert "google" in fetched["linked_providers"]

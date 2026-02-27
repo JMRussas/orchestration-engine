@@ -5,19 +5,22 @@
 // Depends on: api/auth.ts, hooks/useAuth.tsx
 // Used by:    App.tsx
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { apiRegister } from '../api/auth'
+import { apiRegister, fetchOIDCProviders, type OIDCProvider } from '../api/auth'
 import { useAuth } from '../hooks/useAuth'
 
 export default function Register() {
-  const { login } = useAuth()
+  const { login, loginWithOIDC } = useAuth()
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [providers, setProviders] = useState<OIDCProvider[]>([])
+
+  useEffect(() => { fetchOIDCProviders().then(setProviders) }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -73,6 +76,24 @@ export default function Register() {
             {loading ? 'Creating account...' : 'Create Account'}
           </button>
         </form>
+        {providers.length > 0 && (
+          <>
+            <div className="auth-divider"><span>or</span></div>
+            <div className="oauth-buttons">
+              {providers.map(p => (
+                <button
+                  key={p.name}
+                  type="button"
+                  className="oauth-btn"
+                  onClick={() => loginWithOIDC(p.name)}
+                  disabled={loading}
+                >
+                  Continue with {p.display_name}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
         <p className="auth-link">
           Already have an account? <Link to="/login">Sign In</Link>
         </p>

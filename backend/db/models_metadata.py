@@ -25,7 +25,7 @@ users = Table(
     metadata,
     Column("id", Text, primary_key=True),
     Column("email", Text, nullable=False, unique=True),
-    Column("password_hash", Text, nullable=False),
+    Column("password_hash", Text, nullable=True),
     Column("display_name", Text, nullable=False, server_default=""),
     Column("role", Text, nullable=False, server_default="user"),
     Column("is_active", Integer, nullable=False, server_default="1"),
@@ -157,7 +157,20 @@ checkpoints = Table(
     Column("created_at", Float, nullable=False),
 )
 
+user_identities = Table(
+    "user_identities",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("provider", Text, nullable=False),
+    Column("provider_user_id", Text, nullable=False),
+    Column("provider_email", Text),
+    Column("created_at", Float, nullable=False),
+)
+
 # Indexes
+Index("idx_identities_user", user_identities.c.user_id)
+Index("idx_identities_provider_uid", user_identities.c.provider, user_identities.c.provider_user_id, unique=True)
 Index("idx_checkpoints_project", checkpoints.c.project_id)
 Index("idx_plans_project", plans.c.project_id)
 Index("idx_tasks_project", tasks.c.project_id)

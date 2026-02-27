@@ -131,6 +131,7 @@ AUTH_ACCESS_TOKEN_EXPIRE_MINUTES = cfg("auth.access_token_expire_minutes", 30)
 AUTH_REFRESH_TOKEN_EXPIRE_DAYS = cfg("auth.refresh_token_expire_days", 7)
 AUTH_ALLOW_REGISTRATION = cfg("auth.allow_registration", True)
 AUTH_SSE_TOKEN_EXPIRE_SECONDS = cfg("auth.sse_token_expire_seconds", 60)
+AUTH_OIDC_PROVIDERS: list[dict] = cfg("auth.oidc_providers", [])
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +169,16 @@ def validate_config():
                        ("ollama.generate_timeout", OLLAMA_GENERATE_TIMEOUT)]:
         if not isinstance(val, (int, float)) or val <= 0:
             raise ConfigError(f"{label} must be > 0, got {val}")
+
+    # Warning: OIDC provider config issues (non-fatal — OIDC is optional)
+    for i, prov in enumerate(AUTH_OIDC_PROVIDERS):
+        name = prov.get("name", f"<index {i}>")
+        if not prov.get("name"):
+            _logger.warning("OIDC provider at index %d has no 'name'", i)
+        if not prov.get("issuer"):
+            _logger.warning("OIDC provider '%s' has no 'issuer'", name)
+        if not prov.get("client_id") or not prov.get("client_secret"):
+            _logger.warning("OIDC provider '%s' missing client_id or client_secret", name)
 
     # Warning: Anthropic API key not set (Ollama-only usage is valid)
     if not ANTHROPIC_API_KEY:

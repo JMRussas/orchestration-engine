@@ -16,12 +16,15 @@ import {
   clearTokens,
   getAccessToken,
   setTokens,
+  startOIDCLogin,
 } from '../api/auth'
 
 interface AuthState {
   user: User | null
   loading: boolean
   login: (email: string, password: string) => Promise<void>
+  loginWithOIDC: (provider: string) => Promise<void>
+  setUserFromOIDC: (user: User) => void
   logout: () => void
 }
 
@@ -29,6 +32,8 @@ const AuthContext = createContext<AuthState>({
   user: null,
   loading: true,
   login: async () => {},
+  loginWithOIDC: async () => {},
+  setUserFromOIDC: () => {},
   logout: () => {},
 })
 
@@ -99,6 +104,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     startRefreshTimer()
   }, [startRefreshTimer])
 
+  const loginWithOIDC = useCallback(async (provider: string) => {
+    await startOIDCLogin(provider)
+  }, [])
+
+  const setUserFromOIDC = useCallback((u: User) => {
+    setUser(u)
+    startRefreshTimer()
+  }, [startRefreshTimer])
+
   const logout = useCallback(() => {
     clearTokens()
     setUser(null)
@@ -106,7 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [stopRefreshTimer])
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, loginWithOIDC, setUserFromOIDC, logout }}>
       {children}
     </AuthContext.Provider>
   )
