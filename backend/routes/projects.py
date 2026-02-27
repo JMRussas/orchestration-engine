@@ -46,6 +46,7 @@ async def _row_to_project(
 
     For batch use, pass preloaded_summary to avoid per-project DB queries.
     """
+    config = json.loads(row["config_json"]) if row["config_json"] else {}
     data = {
         "id": row["id"],
         "name": row["name"],
@@ -54,7 +55,8 @@ async def _row_to_project(
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "completed_at": row["completed_at"],
-        "config": json.loads(row["config_json"]) if row["config_json"] else {},
+        "config": config,
+        "planning_rigor": config.get("planning_rigor", "L2"),
     }
 
     if include_task_summary:
@@ -100,10 +102,13 @@ async def create_project(
     project_id = uuid.uuid4().hex[:12]
     now = time.time()
 
+    config = dict(body.config)
+    config["planning_rigor"] = body.planning_rigor.value
+
     await db.execute_write(
         "INSERT INTO projects (id, name, requirements, status, config_json, owner_id, created_at, updated_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (project_id, body.name, body.requirements, ProjectStatus.DRAFT, json.dumps(body.config), current_user["id"], now, now),
+        (project_id, body.name, body.requirements, ProjectStatus.DRAFT, json.dumps(config), current_user["id"], now, now),
     )
 
     row = await db.fetchone("SELECT * FROM projects WHERE id = ?", (project_id,))
@@ -181,7 +186,7 @@ async def update_project(
     current_user: dict = Depends(get_current_user),
     db: Database = Depends(Provide[Container.db]),
 ) -> ProjectOut:
-    await _get_owned_project(db, project_id, current_user)
+    row = await _get_owned_project(db, project_id, current_user)
 
     updates = []
     params = []
@@ -191,9 +196,17 @@ async def update_project(
     if body.requirements is not None:
         updates.append("requirements = ?")
         params.append(body.requirements)
-    if body.config is not None:
+    if body.config is not None or body.planning_rigor is not None:
+        # Start from body.config if provided, else existing config
+        if body.config is not None:
+            merged_config = dict(body.config)
+        else:
+            merged_config = json.loads(row["config_json"]) if row["config_json"] else {}
+        # Overlay planning_rigor if explicitly set
+        if body.planning_rigor is not None:
+            merged_config["planning_rigor"] = body.planning_rigor.value
         updates.append("config_json = ?")
-        params.append(json.dumps(body.config))
+        params.append(json.dumps(merged_config))
 
     if not updates:
         raise HTTPException(400, "No fields to update")
@@ -436,14 +449,14 @@ async def clone_project(
             await db.execute_write(
                 "INSERT INTO tasks (id, project_id, plan_id, title, description, task_type, "
                 "priority, status, model_tier, context_json, tools_json, system_prompt, "
-                "max_tokens, wave, requirement_ids_json, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "max_tokens, wave, phase, requirement_ids_json, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (new_task_id, new_project_id, new_plan_id or old_task["plan_id"],
                  old_task["title"], old_task["description"], old_task["task_type"],
                  old_task["priority"], TaskStatus.PENDING, old_task["model_tier"],
                  old_task["context_json"], old_task["tools_json"], old_task["system_prompt"],
-                 old_task["max_tokens"], old_task["wave"], old_task["requirement_ids_json"],
-                 now, now),
+                 old_task["max_tokens"], old_task["wave"], old_task["phase"],
+                 old_task["requirement_ids_json"], now, now),
             )
 
         # 4. Remap task dependencies

@@ -1,5 +1,8 @@
 # orchestration-engine
 
+> **Status: Prototype / Active Development**
+> This project is a work-in-progress and not ready for production use. APIs, database schemas, and behavior may change without notice.
+
 **AI-powered task orchestration: describe what you want, get a plan, approve it, watch it execute.**
 
 Most AI coding tools operate as a single conversation — one model, one context window, one task at a time. Orchestration Engine takes a different approach: it decomposes requirements into a dependency graph of focused tasks, routes each to the cheapest capable model (free local Ollama → Haiku → Sonnet), and executes them in parallel with budget controls, tool use, and real-time progress streaming.

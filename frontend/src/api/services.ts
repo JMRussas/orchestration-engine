@@ -3,5 +3,5 @@
 import { apiFetch } from './client'
 import type { Resource } from '../types'
 
-export const listServices = () =>
-  apiFetch<Resource[]>('/services')
+export const listServices = (refresh = false) =>
+  apiFetch<Resource[]>(`/services${refresh ? '?refresh=true' : ''}`)

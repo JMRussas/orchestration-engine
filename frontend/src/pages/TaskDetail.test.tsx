@@ -64,7 +64,7 @@ describe('TaskDetail', () => {
   it('shows loading state', () => {
     mockApiFetch.mockReturnValue(new Promise(() => {}))
     renderTaskDetail()
-    expect(screen.getByText('Loading...')).toBeInTheDocument()
+    expect(screen.getByText('Loading task...')).toBeInTheDocument()
   })
 
   it('shows error state', async () => {

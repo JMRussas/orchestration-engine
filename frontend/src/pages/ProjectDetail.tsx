@@ -5,11 +5,11 @@ import { useParams, Link } from 'react-router-dom'
 import {
   getProject, listPlans, listTasks, fetchCoverage, fetchCheckpoints,
   generatePlan, approvePlan, startExecution, pauseExecution, cancelProject,
-  resolveCheckpoint,
+  resolveCheckpoint, updateProject,
 } from '../api/projects'
 import { useSSE } from '../hooks/useSSE'
 import { useFetch } from '../hooks/useFetch'
-import type { Project, Plan, Task, Checkpoint, CoverageReport } from '../types'
+import type { Project, Plan, Task, Checkpoint, CoverageReport, PlanningRigor } from '../types'
 
 interface ProjectData {
   project: Project
@@ -51,6 +51,9 @@ export default function ProjectDetail() {
   const [resolveId, setResolveId] = useState<string | null>(null)
   const [resolveGuidance, setResolveGuidance] = useState('')
 
+  // Task grouping mode
+  const [groupBy, setGroupBy] = useState<'wave' | 'phase'>('wave')
+
   // Auto-refresh on SSE events (debounced to avoid request storms)
   useEffect(() => {
     if (sse.events.length === 0) return
@@ -85,9 +88,13 @@ export default function ProjectDetail() {
     setLoading('')
   }
 
+  const handleRigorChange = async (newRigor: PlanningRigor) => {
+    await action('rigor', () => updateProject(id!, { planning_rigor: newRigor }))
+  }
+
   if (!id) return <div className="text-dim">Invalid URL — missing project ID.</div>
   if (error && !project) return <div className="card" style={{ borderColor: 'var(--error)' }}>Error: {error}</div>
-  if (!project) return <div className="text-dim">Loading...</div>
+  if (!project) return <div className="loading-spinner">Loading project...</div>
 
   const latestPlan = plans[0]
   const draftPlan = plans.find(p => p.status === 'draft')
@@ -100,6 +107,22 @@ export default function ProjectDetail() {
           <Link to="/" className="text-dim text-sm">&larr; Projects</Link>
           <h2>{project.name}</h2>
           <span className={`badge ${project.status}`}>{project.status}</span>
+          {project.status === 'draft' ? (
+            <select
+              className="rigor-select"
+              value={project.planning_rigor ?? 'L2'}
+              onChange={e => handleRigorChange(e.target.value as PlanningRigor)}
+              disabled={!!loading}
+            >
+              <option value="L1">L1 Quick</option>
+              <option value="L2">L2 Standard</option>
+              <option value="L3">L3 Thorough</option>
+            </select>
+          ) : (
+            <span className={`badge rigor-${(project.planning_rigor ?? 'L2').toLowerCase()}`}>
+              {project.planning_rigor ?? 'L2'}
+            </span>
+          )}
         </div>
         <div className="flex gap-1">
           {project.status === 'draft' && !draftPlan && (
@@ -169,6 +192,74 @@ export default function ProjectDetail() {
             </span>
           </div>
           <p className="text-dim mb-1">{latestPlan.plan.summary}</p>
+
+          {/* Phases */}
+          {latestPlan.plan.phases && latestPlan.plan.phases.length > 0 && (
+            <div style={{ marginTop: '0.75rem' }}>
+              <h4 className="text-sm text-dim mb-1">Phases</h4>
+              {latestPlan.plan.phases.map((phase, i) => (
+                <div key={i} className="plan-phase-item">
+                  <span className="plan-phase-name">{phase.name}</span>
+                  <span className="text-sm text-dim"> — {phase.description}</span>
+                  <span className="text-sm text-dim"> ({phase.tasks.length} task{phase.tasks.length !== 1 ? 's' : ''})</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Open Questions */}
+          {latestPlan.plan.open_questions && latestPlan.plan.open_questions.length > 0 && (
+            <div style={{ marginTop: '0.75rem' }}>
+              <h4 className="text-sm text-dim mb-1">Open Questions</h4>
+              {latestPlan.plan.open_questions.map((q, i) => (
+                <div key={i} className="plan-question-item">
+                  <div className="text-sm" style={{ fontWeight: 600 }}>{q.question}</div>
+                  <div className="text-sm text-dim">Proposed: {q.proposed_answer}</div>
+                  <div className="text-sm text-dim">Impact: {q.impact}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Risk Assessment */}
+          {latestPlan.plan.risk_assessment && latestPlan.plan.risk_assessment.length > 0 && (
+            <div style={{ marginTop: '0.75rem' }}>
+              <h4 className="text-sm text-dim mb-1">Risk Assessment</h4>
+              {latestPlan.plan.risk_assessment.map((r, i) => (
+                <div key={i} className="plan-risk-item">
+                  <div className="flex-between">
+                    <span className="text-sm" style={{ fontWeight: 600 }}>{r.risk}</span>
+                    <span>
+                      <span className={`badge risk-${r.likelihood}`}>{r.likelihood}</span>
+                      {' '}
+                      <span className={`badge risk-${r.impact}`}>{r.impact}</span>
+                    </span>
+                  </div>
+                  <div className="text-sm text-dim">Mitigation: {r.mitigation}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Test Strategy */}
+          {latestPlan.plan.test_strategy && (
+            <div style={{ marginTop: '0.75rem' }}>
+              <h4 className="text-sm text-dim mb-1">Test Strategy</h4>
+              <div className="text-sm">{latestPlan.plan.test_strategy.approach}</div>
+              {latestPlan.plan.test_strategy.test_tasks && latestPlan.plan.test_strategy.test_tasks.length > 0 && (
+                <ul className="text-sm text-dim" style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+                  {latestPlan.plan.test_strategy.test_tasks.map((t, i) => (
+                    <li key={i}>{t}</li>
+                  ))}
+                </ul>
+              )}
+              {latestPlan.plan.test_strategy.coverage_notes && (
+                <div className="text-sm text-dim" style={{ marginTop: '0.25rem' }}>
+                  {latestPlan.plan.test_strategy.coverage_notes}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -215,31 +306,62 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      {/* Tasks — grouped by wave */}
+      {/* Tasks — grouped by wave or phase */}
       {tasks.length > 0 && (() => {
-        const waves = new Map<number, Task[]>()
-        for (const t of tasks) {
-          const w = t.wave ?? 0
-          if (!waves.has(w)) waves.set(w, [])
-          waves.get(w)!.push(t)
+        const hasPhases = tasks.some(t => t.phase)
+
+        // Build groups based on selected mode
+        type TaskGroup = { key: string; label: string; tasks: Task[] }
+        const groups: TaskGroup[] = []
+
+        if (groupBy === 'phase' && hasPhases) {
+          const phaseMap = new Map<string, Task[]>()
+          for (const t of tasks) {
+            const key = t.phase ?? 'Ungrouped'
+            if (!phaseMap.has(key)) phaseMap.set(key, [])
+            phaseMap.get(key)!.push(t)
+          }
+          for (const [name, phaseTasks] of phaseMap) {
+            groups.push({ key: name, label: name, tasks: phaseTasks })
+          }
+        } else {
+          const waves = new Map<number, Task[]>()
+          for (const t of tasks) {
+            const w = t.wave ?? 0
+            if (!waves.has(w)) waves.set(w, [])
+            waves.get(w)!.push(t)
+          }
+          for (const [wave, waveTasks] of [...waves.entries()].sort((a, b) => a[0] - b[0])) {
+            groups.push({ key: String(wave), label: `Wave ${wave}`, tasks: waveTasks })
+          }
         }
-        const sortedWaves = [...waves.entries()].sort((a, b) => a[0] - b[0])
-        const hasMultipleWaves = sortedWaves.length > 1
+
+        const hasMultipleGroups = groups.length > 1
 
         return (
           <div className="card">
-            <h3>Tasks ({tasks.filter(t => t.status === 'completed').length}/{tasks.length})</h3>
-            {sortedWaves.map(([wave, waveTasks]) => {
-              const completed = waveTasks.filter(t => t.status === 'completed').length
-              const allDone = completed === waveTasks.length
+            <div className="flex-between mb-1">
+              <h3>Tasks ({tasks.filter(t => t.status === 'completed').length}/{tasks.length})</h3>
+              {hasPhases && (
+                <div className="flex gap-1">
+                  <button className={`btn btn-sm ${groupBy === 'wave' ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => setGroupBy('wave')}>By Wave</button>
+                  <button className={`btn btn-sm ${groupBy === 'phase' ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => setGroupBy('phase')}>By Phase</button>
+                </div>
+              )}
+            </div>
+            {groups.map(group => {
+              const completed = group.tasks.filter(t => t.status === 'completed').length
+              const allDone = completed === group.tasks.length
 
               return (
-                <div key={wave} className="wave-group">
-                  {hasMultipleWaves && (
-                    <div className="wave-header">
-                      <h4>Wave {wave} ({waveTasks.length} task{waveTasks.length !== 1 ? 's' : ''})</h4>
+                <div key={group.key} className={groupBy === 'phase' && hasPhases ? 'phase-group' : 'wave-group'}>
+                  {hasMultipleGroups && (
+                    <div className={groupBy === 'phase' && hasPhases ? 'phase-header' : 'wave-header'}>
+                      <h4>{group.label} ({group.tasks.length} task{group.tasks.length !== 1 ? 's' : ''})</h4>
                       <span className="wave-summary">
-                        {allDone ? 'complete' : `${completed}/${waveTasks.length} done`}
+                        {allDone ? 'complete' : `${completed}/${group.tasks.length} done`}
                       </span>
                     </div>
                   )}
@@ -250,7 +372,7 @@ export default function ProjectDetail() {
                       </tr>
                     </thead>
                     <tbody>
-                      {waveTasks.map(t => (
+                      {group.tasks.map(t => (
                         <tr key={t.id}>
                           <td>
                             <Link to={`/project/${id}/task/${t.id}`}>{t.title}</Link>

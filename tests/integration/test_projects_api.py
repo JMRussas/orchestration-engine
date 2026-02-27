@@ -26,7 +26,7 @@ class TestCreateProject:
             "config": {"key": "value"},
         })
         assert resp.status_code == 201
-        assert resp.json()["config"] == {"key": "value"}
+        assert resp.json()["config"]["key"] == "value"
 
     async def test_create_missing_name_returns_422(self, authed_client):
         resp = await authed_client.post("/api/projects", json={
@@ -95,6 +95,49 @@ class TestUpdateProject:
         pid = create.json()["id"]
         resp = await authed_client.patch(f"/api/projects/{pid}", json={})
         assert resp.status_code == 400
+
+
+class TestUpdateProjectRigor:
+    async def test_patch_planning_rigor(self, authed_client):
+        create = await authed_client.post("/api/projects", json={
+            "name": "Rigor Test", "requirements": "r",
+        })
+        pid = create.json()["id"]
+        assert create.json()["planning_rigor"] == "L2"  # default
+
+        resp = await authed_client.patch(f"/api/projects/{pid}", json={
+            "planning_rigor": "L3",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["planning_rigor"] == "L3"
+
+    async def test_patch_rigor_preserves_existing_config(self, authed_client):
+        create = await authed_client.post("/api/projects", json={
+            "name": "Config Test", "requirements": "r",
+            "config": {"custom_key": "custom_value"},
+        })
+        pid = create.json()["id"]
+
+        resp = await authed_client.patch(f"/api/projects/{pid}", json={
+            "planning_rigor": "L1",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["planning_rigor"] == "L1"
+        assert resp.json()["config"]["custom_key"] == "custom_value"
+
+    async def test_patch_config_and_rigor_together(self, authed_client):
+        create = await authed_client.post("/api/projects", json={
+            "name": "Both Test", "requirements": "r",
+        })
+        pid = create.json()["id"]
+
+        resp = await authed_client.patch(f"/api/projects/{pid}", json={
+            "config": {"new_key": "new_value"},
+            "planning_rigor": "L3",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["config"]["new_key"] == "new_value"
+        assert resp.json()["planning_rigor"] == "L3"
 
 
 class TestDeleteProject:

@@ -183,12 +183,13 @@ class TestResourceMonitor:
     async def test_check_all_populates_cache(self):
         """check_all() populates cache; get()/is_available() return correct values."""
         monitor = ResourceMonitor()
-        # Replace resources with a single test resource
+        # Replace resources with a single test resource (reset cache too)
         monitor._resources = [
             ResourceDef(id="anthropic_api", name="Claude API",
                         host="api.anthropic.com", port=443,
                         health_url=None, category="api")
         ]
+        monitor._states = {}
 
         with patch("backend.services.resource_monitor.ANTHROPIC_API_KEY", "sk-test"):
             states = await monitor.check_all()
@@ -211,6 +212,14 @@ class TestResourceMonitor:
         # Cleanup
         if monitor._http:
             await monitor._http.aclose()
+
+    async def test_cache_seeded_with_checking_status(self):
+        """get_all() returns all resources with 'checking' status before any check runs."""
+        monitor = ResourceMonitor()
+        states = monitor.get_all()
+        assert len(states) > 0
+        for s in states:
+            assert s.status == ResourceStatus.CHECKING
 
     async def test_start_stop_background(self):
         """start_background creates task; stop_background cancels and closes client."""

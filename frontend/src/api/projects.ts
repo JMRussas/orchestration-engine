@@ -1,7 +1,7 @@
 // Orchestration Engine - Projects API
 
 import { apiFetch, apiPost, apiPatch, apiDelete } from './client'
-import type { Project, Plan, Task, Checkpoint, CoverageReport } from '../types'
+import type { Project, Plan, Task, Checkpoint, CoverageReport, PlanningRigor } from '../types'
 
 export const listProjects = (status?: string) =>
   apiFetch<Project[]>(`/projects${status ? `?status=${status}` : ''}`)
@@ -9,8 +9,11 @@ export const listProjects = (status?: string) =>
 export const getProject = (id: string) =>
   apiFetch<Project>(`/projects/${id}`)
 
-export const createProject = (name: string, requirements: string) =>
-  apiPost<Project>('/projects', { name, requirements })
+export const createProject = (name: string, requirements: string, planning_rigor: PlanningRigor = 'L2') =>
+  apiPost<Project>('/projects', { name, requirements, planning_rigor })
+
+export const updateProject = (id: string, body: Record<string, unknown>) =>
+  apiPatch<Project>(`/projects/${id}`, body)
 
 export const deleteProject = (id: string) =>
   apiDelete(`/projects/${id}`)
@@ -36,6 +39,7 @@ export const cancelProject = (projectId: string) =>
 export interface TaskListParams {
   status?: string
   wave?: number
+  phase?: string
   model_tier?: string
   search?: string
   sort?: 'priority' | 'created_at' | 'wave' | 'status'
@@ -47,6 +51,7 @@ export const listTasks = (projectId: string, params?: TaskListParams) => {
   const qs = new URLSearchParams()
   if (params?.status) qs.set('status', params.status)
   if (params?.wave !== undefined) qs.set('wave', String(params.wave))
+  if (params?.phase) qs.set('phase', params.phase)
   if (params?.model_tier) qs.set('model_tier', params.model_tier)
   if (params?.search) qs.set('search', params.search)
   if (params?.sort) qs.set('sort', params.sort)

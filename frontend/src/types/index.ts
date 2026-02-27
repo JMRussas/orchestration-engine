@@ -14,6 +14,7 @@ export type PlanStatus = 'draft' | 'approved' | 'superseded'
 export type TaskStatus = 'pending' | 'blocked' | 'queued' | 'running' | 'completed' | 'needs_review' | 'failed' | 'cancelled'
 export type ModelTier = 'haiku' | 'sonnet' | 'opus' | 'ollama'
 export type TaskType = 'code' | 'research' | 'analysis' | 'asset' | 'integration' | 'documentation'
+export type PlanningRigor = 'L1' | 'L2' | 'L3'
 export type ResourceStatus = 'online' | 'offline' | 'degraded'
 export type SSEEventType =
   | 'task_start' | 'task_complete' | 'task_failed' | 'tool_call'
@@ -30,6 +31,7 @@ export interface Project {
   name: string
   requirements: string
   status: ProjectStatus
+  planning_rigor: PlanningRigor
   created_at: number
   updated_at: number
   completed_at: number | null
@@ -59,6 +61,16 @@ export interface Plan {
 
 export interface PlanData {
   summary: string
+  tasks?: PlanTask[]
+  phases?: PlanPhase[]
+  open_questions?: PlanOpenQuestion[]
+  risk_assessment?: PlanRisk[]
+  test_strategy?: PlanTestStrategy
+}
+
+export interface PlanPhase {
+  name: string
+  description: string
   tasks: PlanTask[]
 }
 
@@ -69,6 +81,25 @@ export interface PlanTask {
   complexity: string
   depends_on: (number | string)[]
   tools_needed: string[]
+}
+
+export interface PlanOpenQuestion {
+  question: string
+  proposed_answer: string
+  impact: string
+}
+
+export interface PlanRisk {
+  risk: string
+  likelihood: 'low' | 'medium' | 'high'
+  impact: 'low' | 'medium' | 'high'
+  mitigation: string
+}
+
+export interface PlanTestStrategy {
+  approach: string
+  test_tasks: string[]
+  coverage_notes: string
 }
 
 export interface Task {
@@ -83,6 +114,7 @@ export interface Task {
   model_tier: ModelTier
   model_used: string | null
   wave: number
+  phase: string | null
   tools: string[]
   verification_status: string | null
   verification_notes: string | null

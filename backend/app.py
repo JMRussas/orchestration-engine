@@ -25,6 +25,7 @@ from backend.middleware.auth import get_current_user
 from backend.rate_limit import limiter
 from backend.routes.admin import router as admin_router
 from backend.routes.auth import router as auth_router
+from backend.routes.auth_oidc import router as auth_oidc_router
 from backend.routes.checkpoints import router as checkpoints_router
 from backend.routes.events import router as events_router
 from backend.routes.projects import router as projects_router
@@ -122,6 +123,9 @@ app.include_router(health_router, prefix="/api")
 
 # Auth routes (public — no token required)
 app.include_router(auth_router, prefix="/api")
+
+# OIDC auth routes (mixed: public endpoints + authenticated link/unlink)
+app.include_router(auth_oidc_router, prefix="/api")
 
 # Protected API routes (require valid JWT)
 app.include_router(projects_router, prefix="/api", dependencies=_auth_dep)

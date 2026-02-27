@@ -116,7 +116,10 @@ async def app_client(tmp_db):
     mock_http = AsyncMock()
     mock_http.aclose = AsyncMock()
 
+    from backend.services.oidc import OIDCService
+
     auth = AuthService(db=tmp_db)
+    oidc = OIDCService(db=tmp_db, auth=auth)
     budget = BudgetManager(db=tmp_db)
     progress = ProgressManager(db=tmp_db)
 
@@ -124,6 +127,7 @@ async def app_client(tmp_db):
 
     container.db.override(providers.Object(tmp_db))
     container.auth.override(providers.Object(auth))
+    container.oidc.override(providers.Object(oidc))
     container.budget.override(providers.Object(budget))
     container.progress.override(providers.Object(progress))
     container.executor.override(providers.Object(mock_executor))
@@ -139,6 +143,7 @@ async def app_client(tmp_db):
         init_patcher.stop()
         container.db.reset_override()
         container.auth.reset_override()
+        container.oidc.reset_override()
         container.budget.reset_override()
         container.progress.reset_override()
         container.executor.reset_override()

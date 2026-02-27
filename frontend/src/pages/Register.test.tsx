@@ -7,21 +7,24 @@ const mockLogin = vi.fn()
 
 vi.mock('../api/auth', () => ({
   apiRegister: vi.fn(),
+  fetchOIDCProviders: vi.fn().mockResolvedValue([]),
 }))
 vi.mock('../hooks/useAuth', () => ({
   useAuth: () => ({
     user: null,
     loading: false,
     login: mockLogin,
+    loginWithOIDC: vi.fn(),
     logout: vi.fn(),
   }),
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
 
-import { apiRegister } from '../api/auth'
+import { apiRegister, fetchOIDCProviders } from '../api/auth'
 import Register from './Register'
 
 const mockApiRegister = vi.mocked(apiRegister)
+const mockFetchOIDCProviders = vi.mocked(fetchOIDCProviders)
 
 function renderRegister() {
   return render(
@@ -37,6 +40,7 @@ function renderRegister() {
 
 beforeEach(() => {
   vi.resetAllMocks()
+  mockFetchOIDCProviders.mockResolvedValue([])
 })
 
 describe('Register', () => {

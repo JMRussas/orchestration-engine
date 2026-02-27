@@ -185,7 +185,15 @@ class ResourceMonitor:
 
     def __init__(self):
         self._resources = _build_resources()
-        self._states: dict[str, ResourceState] = {}
+        # Seed cache so get_all() returns the full list immediately
+        # with "checking" status before the first health check completes.
+        self._states: dict[str, ResourceState] = {
+            res.id: ResourceState(
+                id=res.id, name=res.name, category=res.category,
+                status=ResourceStatus.CHECKING, method="",
+            )
+            for res in self._resources
+        }
         self._task: asyncio.Task | None = None
         self._http: httpx.AsyncClient | None = None
 

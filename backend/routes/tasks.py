@@ -67,6 +67,7 @@ async def _row_to_dict(row, db: Database, deps_list: list[str] | None = None) ->
         "output_text": row["output_text"],
         "output_artifacts": json.loads(row["output_artifacts_json"]) if row["output_artifacts_json"] else [],
         "wave": row["wave"],
+        "phase": row["phase"],
         "verification_status": row["verification_status"],
         "verification_notes": row["verification_notes"],
         "requirement_ids": json.loads(row["requirement_ids_json"]) if row["requirement_ids_json"] else [],
@@ -156,6 +157,7 @@ async def list_tasks(
     project_id: str,
     status: TaskStatus | None = None,
     wave: int | None = Query(default=None, ge=0),
+    phase: str | None = Query(default=None, max_length=200),
     model_tier: str | None = None,
     search: str | None = Query(default=None, max_length=200),
     sort: TaskSortField = TaskSortField.PRIORITY,
@@ -178,6 +180,9 @@ async def list_tasks(
     if wave is not None:
         query += " AND wave = ?"
         params.append(wave)
+    if phase:
+        query += " AND phase = ?"
+        params.append(phase)
     if model_tier:
         query += " AND model_tier = ?"
         params.append(model_tier)

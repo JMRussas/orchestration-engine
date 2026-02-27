@@ -84,6 +84,7 @@
     "access_token_expire_minutes": 30,
     "refresh_token_expire_days": 7,
     "sse_token_expire_seconds": 60,
-    "allow_registration": true
+    "allow_registration": true,
+    "oidc_providers": []
   }
 }
