@@ -241,7 +241,7 @@ class TestRunClaudeTask:
     @patch("backend.services.claude_agent.calculate_cost", return_value=0.5)
     @patch("backend.services.claude_agent.get_model_id", return_value="claude-haiku-4-5-20251001")
     async def test_budget_exhausted_mid_loop(self, _mock_model, _mock_cost, executor_with_db):
-        """When budget exhausted mid-loop, breaks with partial result."""
+        """When budget exhausted mid-loop, breaks with partial result and sets flag."""
         executor_with_db._budget.can_spend = AsyncMock(return_value=False)
 
         tool_response = _make_tool_use_response("some_tool", {})
@@ -249,13 +249,30 @@ class TestRunClaudeTask:
         mock_client.messages.create = AsyncMock(return_value=tool_response)
 
         task_row = _make_task_row()
-        await run_claude_task(
+        result = await run_claude_task(
             task_row=task_row, est_cost=0.01, client=mock_client,
             tool_registry=executor_with_db._tool_registry,
             budget=executor_with_db._budget, progress=executor_with_db._progress,
         )
 
         assert mock_client.messages.create.await_count == 1
+        assert result["budget_exhausted"] is True
+
+    @patch("backend.services.claude_agent.calculate_cost", return_value=0.001)
+    @patch("backend.services.claude_agent.get_model_id", return_value="claude-haiku-4-5-20251001")
+    async def test_budget_not_exhausted_returns_false(self, _mock_model, _mock_cost, executor_with_db):
+        """Normal completion sets budget_exhausted=False."""
+        mock_client = AsyncMock()
+        mock_client.messages.create = AsyncMock(return_value=_make_claude_response("Done"))
+
+        task_row = _make_task_row()
+        result = await run_claude_task(
+            task_row=task_row, est_cost=0.01, client=mock_client,
+            tool_registry=executor_with_db._tool_registry,
+            budget=executor_with_db._budget, progress=executor_with_db._progress,
+        )
+
+        assert result["budget_exhausted"] is False
 
     @patch("backend.services.claude_agent.calculate_cost", return_value=0.001)
     @patch("backend.services.claude_agent.get_model_id", return_value="claude-haiku-4-5-20251001")

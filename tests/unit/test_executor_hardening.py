@@ -261,6 +261,15 @@ class TestGracefulShutdown:
 
         assert len(executor_with_db._dispatched) == 0
 
+    async def test_stop_clears_resource_skip_cache(self, executor_with_db):
+        """Shutdown should clear the resource circuit breaker cache."""
+        executor_with_db._resource_skip_until["ollama_local"] = 999999
+        executor_with_db._resource_skip_until["anthropic_api"] = 999999
+
+        await executor_with_db.stop(grace_seconds=0.1)
+
+        assert len(executor_with_db._resource_skip_until) == 0
+
 
 # ---------------------------------------------------------------------------
 # Resource Circuit Breaker

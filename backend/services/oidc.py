@@ -157,8 +157,14 @@ class OIDCService:
                     user_row = await cursor.fetchone()
 
                 if user_row:
-                    # Auto-link to existing user
+                    # Auto-link to existing user — verify account is active
                     user_id = user_row["id"]
+                    active_check = await conn.execute(
+                        "SELECT is_active FROM users WHERE id = ?", (user_id,)
+                    )
+                    active_row = await active_check.fetchone()
+                    if active_row and not active_row["is_active"]:
+                        raise OIDCError("Account is deactivated")
                 else:
                     # Create new user (no password)
                     user_id = str(uuid.uuid4())

@@ -251,6 +251,13 @@ class TestDeactivatedUserOIDC:
             with pytest.raises(OIDCError, match="deactivated"):
                 await oidc_service.oidc_login("testprov", "code", "https://redir", "nonce")
 
+        # Verify no orphaned identity link was created
+        row = await tmp_db.fetchone(
+            "SELECT COUNT(*) as cnt FROM user_identities WHERE provider_user_id = ?",
+            ("deact2-uid",),
+        )
+        assert row["cnt"] == 0, "Identity link should not be created for deactivated users"
+
 
 class TestRedirectURIValidation:
     """H2: Redirect URIs must be validated against an allowlist."""
