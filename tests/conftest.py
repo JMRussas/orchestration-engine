@@ -76,6 +76,37 @@ async def seeded_db(tmp_db):
 
 
 # ---------------------------------------------------------------------------
+# Shared FK-safe data helpers
+# ---------------------------------------------------------------------------
+
+async def create_test_project(db, project_id="proj1"):
+    """Insert a project + plan row so FK constraints pass."""
+    now = time.time()
+    await db.execute_write(
+        "INSERT OR IGNORE INTO projects (id, name, requirements, status, created_at, updated_at) "
+        "VALUES (?, 'Test', 'test', 'draft', ?, ?)",
+        (project_id, now, now),
+    )
+    await db.execute_write(
+        "INSERT OR IGNORE INTO plans (id, project_id, version, model_used, plan_json, status, created_at) "
+        "VALUES (?, ?, 1, 'test', '{}', 'approved', ?)",
+        (f"plan_{project_id}", project_id, now),
+    )
+
+
+async def create_test_task(db, task_id, project_id="proj1"):
+    """Insert a task row so FK constraints pass (project must exist)."""
+    now = time.time()
+    await db.execute_write(
+        "INSERT OR IGNORE INTO tasks (id, project_id, plan_id, title, description, "
+        "task_type, priority, status, model_tier, wave, retry_count, max_retries, "
+        "created_at, updated_at) "
+        "VALUES (?, ?, ?, 'Test', 'test', 'code', 0, 'pending', 'haiku', 0, 0, 5, ?, ?)",
+        (task_id, project_id, f"plan_{project_id}", now, now),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Auth fixture
 # ---------------------------------------------------------------------------
 
@@ -134,6 +165,10 @@ async def app_client(tmp_db):
     container.resource_monitor.override(providers.Object(mock_rm))
     container.http_client.override(providers.Object(mock_http))
     init_patcher.start()
+
+    # Reset rate limiter storage so tests don't hit limits from prior tests
+    from backend.rate_limit import limiter as _limiter
+    _limiter.reset()
 
     try:
         transport = ASGITransport(app=app)

@@ -160,4 +160,5 @@ async def run_claude_task(
         "completion_tokens": total_completion,
         "cost_usd": round(total_cost, 6),
         "model_used": model_id,
+        "budget_exhausted": budget_exhausted,
     }

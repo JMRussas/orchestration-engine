@@ -35,6 +35,64 @@ class TestValidateConfig:
                     validate_config()
                 assert "ANTHROPIC_API_KEY is not set" in caplog.text
 
+    # M1: OIDC provider validation is now fatal for required fields
+    def test_raises_on_oidc_provider_missing_name(self):
+        bad_provider = [{"issuer": "https://x.com", "client_id": "id", "client_secret": "sec"}]
+        with patch("backend.config.AUTH_SECRET_KEY", "a" * 32), \
+             patch("backend.config.ANTHROPIC_API_KEY", "sk-test"), \
+             patch("backend.config.AUTH_OIDC_PROVIDERS", bad_provider):
+            with pytest.raises(ConfigError, match="missing required 'name'"):
+                validate_config()
+
+    def test_raises_on_oidc_provider_missing_issuer(self):
+        bad_provider = [{"name": "p", "client_id": "id", "client_secret": "sec"}]
+        with patch("backend.config.AUTH_SECRET_KEY", "a" * 32), \
+             patch("backend.config.ANTHROPIC_API_KEY", "sk-test"), \
+             patch("backend.config.AUTH_OIDC_PROVIDERS", bad_provider):
+            with pytest.raises(ConfigError, match="missing required 'issuer'"):
+                validate_config()
+
+    def test_raises_on_oidc_provider_missing_client_id(self):
+        bad_provider = [{"name": "p", "issuer": "https://x.com", "client_secret": "sec"}]
+        with patch("backend.config.AUTH_SECRET_KEY", "a" * 32), \
+             patch("backend.config.ANTHROPIC_API_KEY", "sk-test"), \
+             patch("backend.config.AUTH_OIDC_PROVIDERS", bad_provider):
+            with pytest.raises(ConfigError, match="missing required 'client_id'"):
+                validate_config()
+
+    def test_raises_on_oidc_provider_missing_client_secret(self):
+        bad_provider = [{"name": "p", "issuer": "https://x.com", "client_id": "id"}]
+        with patch("backend.config.AUTH_SECRET_KEY", "a" * 32), \
+             patch("backend.config.ANTHROPIC_API_KEY", "sk-test"), \
+             patch("backend.config.AUTH_OIDC_PROVIDERS", bad_provider):
+            with pytest.raises(ConfigError, match="missing required 'client_secret'"):
+                validate_config()
+
+    def test_valid_oidc_provider_passes(self):
+        good_provider = [{"name": "p", "issuer": "https://x.com", "client_id": "id", "client_secret": "sec"}]
+        with patch("backend.config.AUTH_SECRET_KEY", "a" * 32), \
+             patch("backend.config.ANTHROPIC_API_KEY", "sk-test"), \
+             patch("backend.config.AUTH_OIDC_PROVIDERS", good_provider), \
+             patch("backend.config.AUTH_OIDC_REDIRECT_URIS", []):
+            validate_config()  # should not raise
+
+    # M6: CORS origins validation
+    def test_raises_on_invalid_cors_origin(self):
+        with patch("backend.config.AUTH_SECRET_KEY", "a" * 32), \
+             patch("backend.config.ANTHROPIC_API_KEY", "sk-test"), \
+             patch("backend.config.CORS_ORIGINS", ["not-a-url"]):
+            with pytest.raises(ConfigError, match="CORS origin must start with"):
+                validate_config()
+
+    def test_warns_on_cors_wildcard(self, caplog):
+        import logging
+        with patch("backend.config.AUTH_SECRET_KEY", "a" * 32), \
+             patch("backend.config.ANTHROPIC_API_KEY", "sk-test"), \
+             patch("backend.config.CORS_ORIGINS", ["*"]):
+            with caplog.at_level(logging.WARNING):
+                validate_config()
+            assert "allows all origins" in caplog.text
+
     def test_warns_on_model_pricing_mismatch(self, caplog):
         """Models configured without pricing entries should trigger a warning."""
         import logging

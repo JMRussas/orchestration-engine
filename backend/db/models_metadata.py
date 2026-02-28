@@ -135,8 +135,8 @@ task_events = Table(
     "task_events",
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("project_id", Text, nullable=False),
-    Column("task_id", Text),
+    Column("project_id", Text, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+    Column("task_id", Text, ForeignKey("tasks.id", ondelete="SET NULL")),
     Column("event_type", Text, nullable=False),
     Column("message", Text),
     Column("data_json", Text),
@@ -184,3 +184,10 @@ Index("idx_usage_timestamp", usage_log.c.timestamp)
 Index("idx_budget_type", budget_periods.c.period_type)
 Index("idx_events_project", task_events.c.project_id)
 Index("idx_events_task", task_events.c.task_id)
+
+# Composite indexes for common query patterns
+Index("idx_tasks_project_status", tasks.c.project_id, tasks.c.status)
+Index("idx_tasks_project_wave", tasks.c.project_id, tasks.c.wave)
+Index("idx_events_project_task", task_events.c.project_id, task_events.c.task_id)
+Index("idx_deps_task_id", task_deps.c.task_id)
+Index("idx_usage_project_timestamp", usage_log.c.project_id, usage_log.c.timestamp)

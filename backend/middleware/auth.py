@@ -89,11 +89,9 @@ async def get_user_from_sse_token(
 ) -> dict:
     """Validate a short-lived SSE token scoped to a single project.
 
-    Accepts type="sse" tokens and verifies the project_id claim matches
-    the route parameter. Also accepts legacy type="access" tokens for
-    backward compatibility during frontend migration.
+    Only accepts type="sse" tokens and verifies the project_id claim
+    matches the route parameter.
     """
-    # Try SSE token first, fall back to access token
     try:
         payload = auth.decode_token(token)
     except jwt.PyJWTError:
@@ -102,27 +100,17 @@ async def get_user_from_sse_token(
             detail="Invalid or expired token",
         )
 
-    token_type = payload.get("type")
+    if payload.get("type") != "sse":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token type — SSE token required",
+        )
 
-    if token_type == "sse":
-        if payload.get("project_id") != project_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="SSE token not valid for this project",
-            )
-        user, _ = await _validate_token(auth, token, "sse")
-        return user
+    if payload.get("project_id") != project_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="SSE token not valid for this project",
+        )
 
-    if token_type == "access":
-        user, _ = await _validate_token(auth, token, "access")
-        # For access tokens, verify project ownership (SSE tokens are already scoped)
-        from backend.db.connection import Database
-        from backend.routes.projects import _get_owned_project
-        db: Database = Container.db()
-        await _get_owned_project(db, project_id, user)
-        return user
-
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid token type",
-    )
+    user, _ = await _validate_token(auth, token, "sse")
+    return user

@@ -20,8 +20,8 @@ import anthropic
 from backend.config import (
     ANTHROPIC_API_KEY,
     MAX_CONCURRENT_TASKS,
+    RESOURCE_SKIP_SECONDS,
     SHUTDOWN_GRACE_SECONDS,
-    STALE_TASK_THRESHOLD_SECONDS,
     TICK_INTERVAL,
     WAVE_CHECKPOINTS,
 )
@@ -52,6 +52,7 @@ class Executor:
         self._in_flight: set[asyncio.Task] = set()  # Tracked task handles for clean shutdown
         self._client: anthropic.AsyncAnthropic | None = None  # Shared Anthropic client
         self._retry_after: dict[str, float] = {}  # task_id → earliest retry timestamp
+        self._resource_skip_until: dict[str, float] = {}  # resource → skip until timestamp
 
     async def start(self):
         """Start the executor loop. Recovers stale tasks from prior crashes."""
@@ -94,11 +95,24 @@ class Executor:
                 await asyncio.gather(*pending, return_exceptions=True)
             self._in_flight.clear()
 
+        # Reset any running/queued tasks to pending so they can be re-dispatched
+        # after restart, rather than being stuck in a non-terminal state.
+        reset_cursor = await self._db.execute_write(
+            "UPDATE tasks SET status = ?, error = ?, updated_at = ? "
+            "WHERE status IN (?, ?)",
+            (TaskStatus.PENDING, "Interrupted by shutdown", time.time(),
+             TaskStatus.RUNNING, TaskStatus.QUEUED),
+        )
+        if reset_cursor.rowcount > 0:
+            logger.info("Reset %d running/queued task(s) to pending on shutdown", reset_cursor.rowcount)
+
         # Close the shared Anthropic client and clear state
         if self._client:
             await self._client.close()
             self._client = None
+        self._dispatched.clear()
         self._retry_after.clear()
+        self._resource_skip_until.clear()
         logger.info("Executor stopped")
 
     async def _run_loop(self):
@@ -113,29 +127,49 @@ class Executor:
     async def _recover_stale_tasks(self):
         """Reset tasks stuck in 'running' or 'queued' from a prior crash.
 
-        Only recovers tasks whose updated_at is older than the configured
-        stale threshold (default 5 min). Increments retry_count so the task
-        doesn't silently restart without tracking the failed attempt.
+        Runs once on startup before the tick loop — all running/queued tasks
+        are stale by definition since no executor was dispatching them.
+        Only increments retry_count for RUNNING tasks (QUEUED tasks hadn't
+        started execution, so consuming a retry attempt would be wrong).
         """
-        cutoff = time.time() - STALE_TASK_THRESHOLD_SECONDS
         stale = await self._db.fetchall(
-            "SELECT id, title, project_id, retry_count FROM tasks "
-            "WHERE status IN (?, ?) AND updated_at < ?",
-            (TaskStatus.RUNNING, TaskStatus.QUEUED, cutoff),
+            "SELECT id, title, status, project_id, retry_count FROM tasks "
+            "WHERE status IN (?, ?)",
+            (TaskStatus.RUNNING, TaskStatus.QUEUED),
         )
         if not stale:
             return
 
         now = time.time()
         for row in stale:
-            await self._db.execute_write(
-                "UPDATE tasks SET status = ?, retry_count = retry_count + 1, "
-                "error = ?, updated_at = ? WHERE id = ?",
-                (TaskStatus.PENDING,
-                 f"Recovered from stale state (retry {row['retry_count'] + 1})",
-                 now, row["id"]),
+            # Check if any dependencies are incomplete → should be BLOCKED, not PENDING
+            dep_count = await self._db.fetchone(
+                "SELECT COUNT(*) as cnt FROM task_deps d "
+                "JOIN tasks dep ON dep.id = d.depends_on "
+                "WHERE d.task_id = ? AND dep.status != ?",
+                (row["id"], TaskStatus.COMPLETED),
             )
-        logger.info("Recovered %d stale task(s) to pending", len(stale))
+            has_unmet_deps = dep_count and dep_count["cnt"] > 0
+            new_status = TaskStatus.BLOCKED if has_unmet_deps else TaskStatus.PENDING
+
+            # Only count as a retry attempt if the task was actually running
+            if row["status"] == TaskStatus.RUNNING:
+                await self._db.execute_write(
+                    "UPDATE tasks SET status = ?, retry_count = retry_count + 1, "
+                    "error = ?, updated_at = ? WHERE id = ?",
+                    (new_status,
+                     f"Recovered from stale state (retry {row['retry_count'] + 1})",
+                     now, row["id"]),
+                )
+            else:
+                await self._db.execute_write(
+                    "UPDATE tasks SET status = ?, "
+                    "error = ?, updated_at = ? WHERE id = ?",
+                    (new_status,
+                     "Recovered from queued state after restart",
+                     now, row["id"]),
+                )
+        logger.info("Recovered %d stale task(s) to pending/blocked", len(stale))
 
     async def _tick(self):
         """One executor tick: find ready tasks and dispatch them."""
@@ -201,24 +235,28 @@ class Executor:
                     est_cost = calculate_cost(get_model_id(tier), _EST_TASK_INPUT_TOKENS, task_row["max_tokens"])
                     if not await self._budget.reserve_spend(est_cost):
                         continue
-                    if not await self._budget.can_spend_project(pid, est_cost):
+                    if not await self._budget.reserve_spend_project(pid, est_cost):
                         await self._budget.release_reservation(est_cost)
                         continue
 
-                # Atomic claim: only dispatch if we're the one who transitions pending→queued
+                # Atomic claim: pre-add to _dispatched to prevent duplicate dispatch,
+                # then verify via atomic DB update. Remove on contention.
                 if task_row["id"] in self._dispatched:
                     if est_cost > 0:
                         await self._budget.release_reservation(est_cost)
+                        await self._budget.release_reservation_project(pid, est_cost)
                     continue
+                self._dispatched.add(task_row["id"])
                 cursor = await self._db.execute_write(
                     "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
                     (TaskStatus.QUEUED, time.time(), task_row["id"], TaskStatus.PENDING),
                 )
                 if cursor.rowcount == 0:
+                    self._dispatched.discard(task_row["id"])
                     if est_cost > 0:
                         await self._budget.release_reservation(est_cost)
+                        await self._budget.release_reservation_project(pid, est_cost)
                     continue  # Another tick already claimed it
-                self._dispatched.add(task_row["id"])
                 handle = asyncio.create_task(
                     execute_task(
                         task_row=task_row,
@@ -318,6 +356,21 @@ class Executor:
             (TaskStatus.PENDING, now, project_id, TaskStatus.BLOCKED, TaskStatus.COMPLETED),
         )
 
+    def _check_resource(self, resource_name: str) -> bool:
+        """Check if a resource is available, with circuit breaker caching.
+
+        If a resource was recently found offline, skip re-checking for the
+        configured skip period to avoid hammering health endpoints on every tick.
+        """
+        now = time.time()
+        if now < self._resource_skip_until.get(resource_name, 0):
+            return False
+        if not self._resource_monitor.is_available(resource_name):
+            self._resource_skip_until[resource_name] = now + RESOURCE_SKIP_SECONDS
+            return False
+        self._resource_skip_until.pop(resource_name, None)
+        return True
+
     def _resources_available(self, task_row) -> bool:
         """Check if the resources this task needs are available."""
         tier = ModelTier(task_row["model_tier"])
@@ -325,24 +378,24 @@ class Executor:
 
         # Ollama tasks need Ollama online
         if tier == ModelTier.OLLAMA:
-            if not self._resource_monitor.is_available("ollama_local"):
+            if not self._check_resource("ollama_local"):
                 return False
 
         # Claude tasks need API key
         if tier in (ModelTier.HAIKU, ModelTier.SONNET, ModelTier.OPUS):
-            if not self._resource_monitor.is_available("anthropic_api"):
+            if not self._check_resource("anthropic_api"):
                 return False
 
         # ComfyUI tool needs ComfyUI online
         if "generate_image" in tools:
-            if not (self._resource_monitor.is_available("comfyui_local") or
-                    self._resource_monitor.is_available("comfyui_server")):
+            if not (self._check_resource("comfyui_local") or
+                    self._check_resource("comfyui_server")):
                 return False
 
         # RAG tools need Ollama for embeddings
         if any(t in tools for t in ("search_knowledge", "lookup_type")):
             # lookup_type doesn't need Ollama (FTS only), but search_knowledge does
-            if "search_knowledge" in tools and not self._resource_monitor.is_available("ollama_local"):
+            if "search_knowledge" in tools and not self._check_resource("ollama_local"):
                 return False
 
         return True

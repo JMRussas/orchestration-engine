@@ -14,7 +14,7 @@ import uuid
 
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 
-from backend.config import AUTH_OIDC_PROVIDERS
+from backend.config import AUTH_OIDC_PROVIDERS, AUTH_OIDC_REDIRECT_URIS
 from backend.db.connection import Database
 from backend.exceptions import AccountLinkError, NotFoundError, OIDCError
 from backend.services.auth import AuthService
@@ -59,6 +59,10 @@ class OIDCService:
         Returns (authorization_url, state, nonce).
         """
         prov = self._get_provider(provider_name)
+
+        # Validate redirect_uri against allowlist (if configured)
+        if AUTH_OIDC_REDIRECT_URIS and redirect_uri not in AUTH_OIDC_REDIRECT_URIS:
+            raise OIDCError("Redirect URI not allowed")
         metadata = await self._fetch_metadata(prov)
 
         state = secrets.token_urlsafe(32)
@@ -123,7 +127,7 @@ class OIDCService:
         email = claims["email"]
         provider_uid = claims["provider_user_id"]
         prov = self._providers[provider_name]
-        auto_link = prov.get("auto_link_by_email", True)
+        auto_link = prov.get("auto_link_by_email", False)
 
         async with self._db.transaction() as conn:
             # Check if this provider identity already exists
@@ -135,8 +139,14 @@ class OIDCService:
             row = await existing.fetchone()
 
             if row:
-                # Existing linked identity — login
+                # Existing linked identity — verify account is active
                 user_id = row["user_id"]
+                active_check = await conn.execute(
+                    "SELECT is_active FROM users WHERE id = ?", (user_id,)
+                )
+                active_row = await active_check.fetchone()
+                if active_row and not active_row["is_active"]:
+                    raise OIDCError("Account is deactivated")
             else:
                 # New identity — check for existing user by email
                 user_row = None
@@ -147,8 +157,14 @@ class OIDCService:
                     user_row = await cursor.fetchone()
 
                 if user_row:
-                    # Auto-link to existing user
+                    # Auto-link to existing user — verify account is active
                     user_id = user_row["id"]
+                    active_check = await conn.execute(
+                        "SELECT is_active FROM users WHERE id = ?", (user_id,)
+                    )
+                    active_row = await active_check.fetchone()
+                    if active_row and not active_row["is_active"]:
+                        raise OIDCError("Account is deactivated")
                 else:
                     # Create new user (no password)
                     user_id = str(uuid.uuid4())
@@ -183,6 +199,8 @@ class OIDCService:
         user = await self._auth.get_user(user_id)
         if not user:
             raise OIDCError("User not found after OIDC login")
+        if not user.get("is_active"):
+            raise OIDCError("Account is deactivated")
 
         access_token = self._auth.create_access_token(user["id"], user["role"])
         refresh_token = self._auth.create_refresh_token(user["id"])

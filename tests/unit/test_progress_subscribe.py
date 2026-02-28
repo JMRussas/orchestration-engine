@@ -11,6 +11,7 @@ import json
 import pytest
 
 from backend.services.progress import ProgressManager
+from tests.conftest import create_test_project, create_test_task
 
 
 # ---------------------------------------------------------------------------
@@ -21,6 +22,8 @@ class TestProgressSubscribe:
 
     async def test_yields_event_after_push(self, tmp_db):
         """subscribe() yields SSE-formatted event after push_event."""
+        await create_test_project(tmp_db, "proj_001")
+        await create_test_task(tmp_db, "t1", "proj_001")
         pm = ProgressManager(db=tmp_db)
 
         gen = pm.subscribe("proj_001")
@@ -70,6 +73,7 @@ class TestProgressSubscribe:
 
     async def test_terminal_event_breaks_generator(self, tmp_db):
         """subscribe() stops after project_complete event."""
+        await create_test_project(tmp_db, "proj_003")
         pm = ProgressManager(db=tmp_db)
 
         gen = pm.subscribe("proj_003")
@@ -109,6 +113,7 @@ class TestProgressSubscribe:
 
     async def test_concurrent_subscribers(self, tmp_db):
         """Two subscribers on the same project both receive events."""
+        await create_test_project(tmp_db, "proj_005")
         pm = ProgressManager(db=tmp_db)
 
         gen1 = pm.subscribe("proj_005")

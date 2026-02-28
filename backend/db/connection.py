@@ -9,7 +9,6 @@
 import asyncio
 import logging
 import sqlite3
-import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -123,8 +122,8 @@ CREATE TABLE IF NOT EXISTS budget_periods (
 
 CREATE TABLE IF NOT EXISTS task_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    project_id TEXT NOT NULL,
-    task_id TEXT,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
     event_type TEXT NOT NULL,
     message TEXT,
     data_json TEXT,
@@ -170,6 +169,13 @@ CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage_log(timestamp);
 CREATE INDEX IF NOT EXISTS idx_budget_type ON budget_periods(period_type);
 CREATE INDEX IF NOT EXISTS idx_events_project ON task_events(project_id);
 CREATE INDEX IF NOT EXISTS idx_events_task ON task_events(task_id);
+
+-- Composite indexes for common query patterns
+CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status);
+CREATE INDEX IF NOT EXISTS idx_tasks_project_wave ON tasks(project_id, wave);
+CREATE INDEX IF NOT EXISTS idx_events_project_task ON task_events(project_id, task_id);
+CREATE INDEX IF NOT EXISTS idx_deps_task_id ON task_deps(task_id);
+CREATE INDEX IF NOT EXISTS idx_usage_project_timestamp ON usage_log(project_id, timestamp);
 """
 
 
@@ -215,31 +221,7 @@ class Database:
             await self._conn.executescript(_SCHEMA)
             await self._conn.commit()
 
-        # Recover any interrupted jobs from previous runs
-        await self._recover_interrupted()
-
         logger.info("Database initialized at %s", self._path)
-
-    async def _recover_interrupted(self):
-        """Mark any tasks stuck in 'running' or 'queued' as failed."""
-        if not self._conn:
-            return
-        now = time.time()
-        cursor = await self._conn.execute(
-            "UPDATE tasks SET status = 'failed', "
-            "error = 'Server restart - task interrupted', "
-            "updated_at = ? WHERE status IN ('running', 'queued')",
-            (now,),
-        )
-        if cursor.rowcount > 0:
-            logger.info("Recovered %d interrupted task(s)", cursor.rowcount)
-        # Also mark projects that were 'executing' as needing attention
-        await self._conn.execute(
-            "UPDATE projects SET status = 'paused', updated_at = ? "
-            "WHERE status = 'executing'",
-            (now,),
-        )
-        await self._conn.commit()
 
     @property
     def conn(self) -> aiosqlite.Connection:

@@ -20,6 +20,16 @@ from slowapi.errors import RateLimitExceeded
 
 from backend.config import CORS_ORIGINS, DB_PATH, PROJECT_ROOT, validate_config
 from backend.container import Container
+from backend.exceptions import (
+    AccountLinkError,
+    BudgetExhaustedError,
+    CycleDetectedError,
+    InvalidStateError,
+    NotFoundError,
+    OIDCError,
+    OrchestrationError,
+    PlanParseError,
+)
 from backend.logging_config import set_request_id
 from backend.middleware.auth import get_current_user
 from backend.rate_limit import limiter
@@ -94,6 +104,54 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
         status_code=429,
         content={"detail": "Rate limit exceeded. Try again later."},
     )
+
+
+# Global exception handlers — safety net for uncaught business errors
+@app.exception_handler(NotFoundError)
+async def not_found_handler(request: Request, exc: NotFoundError):
+    return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+
+@app.exception_handler(BudgetExhaustedError)
+async def budget_handler(request: Request, exc: BudgetExhaustedError):
+    return JSONResponse(status_code=402, content={"detail": str(exc)})
+
+
+@app.exception_handler(PlanParseError)
+async def plan_parse_handler(request: Request, exc: PlanParseError):
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
+@app.exception_handler(CycleDetectedError)
+async def cycle_handler(request: Request, exc: CycleDetectedError):
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
+@app.exception_handler(InvalidStateError)
+async def invalid_state_handler(request: Request, exc: InvalidStateError):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(OIDCError)
+async def oidc_error_handler(request: Request, exc: OIDCError):
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(AccountLinkError)
+async def account_link_handler(request: Request, exc: AccountLinkError):
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(OrchestrationError)
+async def orchestration_handler(request: Request, exc: OrchestrationError):
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(Exception)
+async def unhandled_handler(request: Request, exc: Exception):
+    logger.error("Unhandled exception: %s", exc, exc_info=True)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
 
 # Request ID tracing
 class RequestIDMiddleware(BaseHTTPMiddleware):

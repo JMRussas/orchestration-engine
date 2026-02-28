@@ -101,10 +101,10 @@ async def verify_output(
         verdict_str = parsed.get("verdict", "passed")
         notes = parsed.get("notes", "")
     except (json.JSONDecodeError, AttributeError):
-        # If we can't parse, assume passed (don't block on verification failure)
-        logger.warning("Could not parse verification response: %s", raw[:200])
-        verdict_str = "passed"
-        notes = "Verification response was not parseable JSON"
+        # If we can't parse, escalate to human review (don't silently pass)
+        logger.warning("Could not parse verification response, escalating to human review: %s", raw[:200])
+        verdict_str = "human_needed"
+        notes = "Verification response was not parseable JSON — escalated to human review"
 
     # Map to enum
     verdict_map = {
@@ -112,6 +112,6 @@ async def verify_output(
         "gaps_found": VerificationResult.GAPS_FOUND,
         "human_needed": VerificationResult.HUMAN_NEEDED,
     }
-    result = verdict_map.get(verdict_str, VerificationResult.PASSED)
+    result = verdict_map.get(verdict_str, VerificationResult.HUMAN_NEEDED)
 
     return {"result": result, "notes": notes, "cost_usd": cost}

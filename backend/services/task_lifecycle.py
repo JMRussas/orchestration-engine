@@ -37,6 +37,9 @@ _TRANSIENT_ERRORS = (
     httpx.ReadTimeout,
 )
 
+# Maximum verification feedback entries kept in context to prevent unbounded growth
+_MAX_VERIFICATION_FEEDBACKS = 3
+
 
 async def create_checkpoint(
     *, project_id, task_id, task_row, error_msg, db, progress,
@@ -129,6 +132,10 @@ async def verify_task_output(
         if retry_count < max_retries:
             # Auto-retry with verification feedback appended to context
             ctx = json.loads(task_row["context_json"]) if task_row["context_json"] else []
+            # Cap feedback entries to prevent unbounded context growth
+            feedbacks = [e for e in ctx if e.get("type") == "verification_feedback"]
+            if len(feedbacks) >= _MAX_VERIFICATION_FEEDBACKS:
+                ctx = [e for e in ctx if e.get("type") != "verification_feedback"]
             ctx.append({
                 "type": "verification_feedback",
                 "content": f"Previous attempt had gaps: {v_notes}. Address these issues.",
@@ -248,8 +255,29 @@ async def execute_task(
                         tool_registry=tool_registry, budget=budget, progress=progress,
                     )
 
-                # Mark completed, clean up retry tracking
+                # Handle budget exhaustion — mark for review, don't complete
                 retry_after.pop(task_id, None)
+                if result.get("budget_exhausted"):
+                    await db.execute_write(
+                        "UPDATE tasks SET status = ?, output_text = ?, error = ?, "
+                        "prompt_tokens = ?, completion_tokens = ?, cost_usd = ?, "
+                        "model_used = ?, updated_at = ? WHERE id = ?",
+                        (
+                            TaskStatus.NEEDS_REVIEW, result["output"],
+                            "Budget exhausted mid-execution (partial output)",
+                            result["prompt_tokens"], result["completion_tokens"],
+                            result["cost_usd"], result["model_used"],
+                            time.time(), task_id,
+                        ),
+                    )
+                    await progress.push_event(
+                        project_id, "task_needs_review",
+                        f"{task_row['title']}: budget exhausted, partial output needs review",
+                        task_id=task_id,
+                    )
+                    return
+
+                # Mark completed
                 await db.execute_write(
                     "UPDATE tasks SET status = ?, output_text = ?, "
                     "prompt_tokens = ?, completion_tokens = ?, cost_usd = ?, "
@@ -263,6 +291,8 @@ async def execute_task(
                 )
 
                 # Optional output verification (skip for Ollama — free tasks)
+                # Run BEFORE forwarding context to prevent dependents from
+                # receiving output that verification may reject.
                 if VERIFICATION_ENABLED and tier != ModelTier.OLLAMA and client:
                     verification_overridden = await verify_task_output(
                         task_row=task_row, output_text=result["output"],
@@ -277,7 +307,8 @@ async def execute_task(
                     task_id=task_id, cost_usd=result["cost_usd"],
                 )
 
-                # Forward output to dependent tasks' context
+                # Forward output to dependent tasks' context (only after
+                # verification passes — do not forward retried/reviewed output)
                 await forward_context(
                     completed_task=task_row, output_text=result["output"], db=db,
                 )
@@ -338,3 +369,4 @@ async def execute_task(
         dispatched.discard(task_id)
         if est_cost > 0:
             await budget.release_reservation(est_cost)
+            await budget.release_reservation_project(task_row["project_id"], est_cost)

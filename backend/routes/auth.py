@@ -7,8 +7,10 @@
 
 from dependency_injector.wiring import inject, Provide
 from fastapi import APIRouter, Depends, HTTPException
+from starlette.requests import Request
 
 from backend.container import Container
+from backend.rate_limit import limiter
 from backend.middleware.auth import get_current_user
 from backend.models.schemas import (
     LoginRequest,
@@ -24,8 +26,10 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/register", status_code=201)
+@limiter.limit("5/minute")
 @inject
 async def register(
+    request: Request,
     body: RegisterRequest,
     auth: AuthService = Depends(Provide[Container.auth]),
 ) -> UserOut:
@@ -40,8 +44,10 @@ async def register(
 
 
 @router.post("/login")
+@limiter.limit("5/minute")
 @inject
 async def login(
+    request: Request,
     body: LoginRequest,
     auth: AuthService = Depends(Provide[Container.auth]),
 ) -> LoginResponse:
@@ -54,8 +60,10 @@ async def login(
 
 
 @router.post("/refresh")
+@limiter.limit("10/minute")
 @inject
 async def refresh(
+    request: Request,
     body: RefreshRequest,
     auth: AuthService = Depends(Provide[Container.auth]),
 ) -> RefreshResponse:
