@@ -27,13 +27,18 @@ export default function Analytics() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    Promise.all([
+    const errors: string[] = []
+    Promise.allSettled([
       getCostBreakdown().then(setCost),
       getTaskOutcomes().then(setOutcomes),
       getEfficiency().then(setEfficiency),
-    ])
-      .catch(e => setError(String(e)))
-      .finally(() => setLoading(false))
+    ]).then(results => {
+      for (const r of results) {
+        if (r.status === 'rejected') errors.push(String(r.reason))
+      }
+      if (errors.length) setError(errors.join('; '))
+      setLoading(false)
+    })
   }, [])
 
   if (loading) return <p className="text-dim">Loading analytics...</p>
@@ -203,10 +208,11 @@ export default function Analytics() {
                 <span className="text-dim">No completed tasks yet</span>
               ) : (
                 <table>
-                  <thead><tr><th>Wave</th><th>Tasks</th><th>Avg Duration</th></tr></thead>
+                  <thead><tr><th>Project</th><th>Wave</th><th>Tasks</th><th>Avg Duration</th></tr></thead>
                   <tbody>
                     {efficiency.wave_throughput.map(w => (
-                      <tr key={w.wave}>
+                      <tr key={`${w.project_id}-${w.wave}`}>
+                        <td>{w.project_name}</td>
                         <td>Wave {w.wave}</td>
                         <td>{w.task_count}</td>
                         <td>{w.avg_duration_seconds != null ? `${w.avg_duration_seconds.toFixed(1)}s` : '-'}</td>

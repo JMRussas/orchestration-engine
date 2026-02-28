@@ -347,6 +347,8 @@ class RetryByTier(BaseModel):
 
 
 class WaveThroughput(BaseModel):
+    project_id: str
+    project_name: str
     wave: int
     task_count: int
     avg_duration_seconds: float | None = None

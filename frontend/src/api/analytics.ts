@@ -69,6 +69,8 @@ export interface RetryByTier {
 }
 
 export interface WaveThroughput {
+  project_id: string
+  project_name: string
   wave: number
   task_count: number
   avg_duration_seconds: number | null

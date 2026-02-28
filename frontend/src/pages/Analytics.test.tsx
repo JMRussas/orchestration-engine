@@ -48,8 +48,8 @@ const mockEfficiency: Efficiency = {
   checkpoint_count: 2,
   unresolved_checkpoint_count: 1,
   wave_throughput: [
-    { wave: 0, task_count: 3, avg_duration_seconds: 45.5 },
-    { wave: 1, task_count: 2, avg_duration_seconds: 30.0 },
+    { project_id: 'p1', project_name: 'Project Alpha', wave: 0, task_count: 3, avg_duration_seconds: 45.5 },
+    { project_id: 'p1', project_name: 'Project Alpha', wave: 1, task_count: 2, avg_duration_seconds: 30.0 },
   ],
   cost_efficiency: [
     { model_tier: 'haiku', cost_usd: 0.05, tasks_completed: 2, verification_pass_count: 2, cost_per_pass: 0.025 },
@@ -81,7 +81,8 @@ describe('Analytics', () => {
     render(<Analytics />)
 
     expect(await screen.findByText('Cost Breakdown')).toBeInTheDocument()
-    expect(screen.getByText('Project Alpha')).toBeInTheDocument()
+    // Project Alpha appears in cost breakdown AND wave throughput tables
+    expect(screen.getAllByText('Project Alpha').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('Total Spend:')).toBeInTheDocument()
   })
 
@@ -131,12 +132,38 @@ describe('Analytics', () => {
     })
   })
 
-  it('shows error on fetch failure', async () => {
+  it('wave throughput shows project name', async () => {
+    setupMocks()
+    render(<Analytics />)
+
+    await waitFor(() => {
+      // Project column in wave throughput table
+      const cells = screen.getAllByText('Project Alpha')
+      expect(cells.length).toBeGreaterThanOrEqual(1)
+    })
+  })
+
+  it('shows error on all fetch failures', async () => {
     mockGetCostBreakdown.mockRejectedValue(new Error('Network error'))
     mockGetTaskOutcomes.mockRejectedValue(new Error('Network error'))
     mockGetEfficiency.mockRejectedValue(new Error('Network error'))
 
     render(<Analytics />)
     expect(await screen.findByText(/Failed to load/)).toBeInTheDocument()
+  })
+
+  it('shows partial data and error on partial failure', async () => {
+    // Cost succeeds, others fail
+    mockGetCostBreakdown.mockResolvedValue(mockCost)
+    mockGetTaskOutcomes.mockRejectedValue(new Error('Outcomes failed'))
+    mockGetEfficiency.mockRejectedValue(new Error('Efficiency failed'))
+
+    render(<Analytics />)
+
+    // Should show the error banner
+    expect(await screen.findByText(/Failed to load/)).toBeInTheDocument()
+    // Should still render the cost data that succeeded
+    expect(screen.getByText('Cost Breakdown')).toBeInTheDocument()
+    expect(screen.getByText('Project Alpha')).toBeInTheDocument()
   })
 })
