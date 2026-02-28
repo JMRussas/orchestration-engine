@@ -10,7 +10,6 @@
 #  Used by:    app.py
 
 import time
-from datetime import datetime, timedelta, timezone
 
 from dependency_injector.wiring import inject, Provide
 from fastapi import APIRouter, Depends, Query
@@ -38,6 +37,7 @@ router = APIRouter(prefix="/admin/analytics", tags=["analytics"])
 _TERMINAL_STATUSES = (
     TaskStatus.COMPLETED.value,
     TaskStatus.FAILED.value,
+    TaskStatus.CANCELLED.value,
     TaskStatus.NEEDS_REVIEW.value,
 )
 _TERMINAL_PLACEHOLDERS = ",".join("?" * len(_TERMINAL_STATUSES))
@@ -60,7 +60,6 @@ async def cost_breakdown(
     all three sections to the requested time window.
     """
     cutoff = time.time() - (days * 86400)
-    date_cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
 
     # By project — from usage_log joined with tasks (terminal only) and projects
     # Same terminal-status filter as by_model_tier so totals agree.
@@ -105,18 +104,21 @@ async def cost_breakdown(
         for r in tier_rows
     ]
 
-    # Daily trend — from pre-aggregated budget_periods, filtered by date range
+    # Daily trend — from usage_log with same JOIN/filter as by_project/by_model_tier
     trend_rows = await db.fetchall(
-        "SELECT period_key, total_cost_usd, api_call_count "
-        "FROM budget_periods WHERE period_type = 'daily' AND period_key >= ? "
-        "ORDER BY period_key ASC",
-        (date_cutoff,),
+        "SELECT DATE(u.timestamp, 'unixepoch') as date, "
+        "SUM(u.cost_usd) as cost, COUNT(*) as api_calls "
+        "FROM usage_log u "
+        "JOIN tasks t ON t.id = u.task_id "
+        f"WHERE t.status IN ({_TERMINAL_PLACEHOLDERS}) AND u.timestamp >= ? "
+        "GROUP BY date ORDER BY date ASC",
+        (*_TERMINAL_STATUSES, cutoff),
     )
     daily_trend = [
         DailyCostTrend(
-            date=r["period_key"],
-            cost_usd=round(r["total_cost_usd"] or 0, 6),
-            api_calls=r["api_call_count"],
+            date=r["date"],
+            cost_usd=round(r["cost"] or 0, 6),
+            api_calls=r["api_calls"],
         )
         for r in trend_rows
     ]
@@ -156,12 +158,12 @@ async def task_outcomes(
     for r in outcome_rows:
         tier = r["model_tier"]
         if tier not in tier_map:
-            tier_map[tier] = {"completed": 0, "failed": 0, "needs_review": 0}
+            tier_map[tier] = {"completed": 0, "failed": 0, "cancelled": 0, "needs_review": 0}
         tier_map[tier][r["status"]] = r["cnt"]
 
     by_tier = []
     for tier, counts in sorted(tier_map.items()):
-        total = counts["completed"] + counts["failed"] + counts["needs_review"]
+        total = counts["completed"] + counts["failed"] + counts["cancelled"] + counts["needs_review"]
         by_tier.append(TaskOutcomeByTier(
             model_tier=tier,
             total=total,
@@ -171,11 +173,13 @@ async def task_outcomes(
             success_rate=round(counts["completed"] / total, 4) if total else 0,
         ))
 
-    # Verification by tier
+    # Verification by tier — terminal statuses only
     verif_rows = await db.fetchall(
         "SELECT model_tier, verification_status, COUNT(*) as cnt "
         "FROM tasks WHERE verification_status IS NOT NULL "
-        "GROUP BY model_tier, verification_status"
+        f"AND status IN ({_TERMINAL_PLACEHOLDERS}) "
+        "GROUP BY model_tier, verification_status",
+        _TERMINAL_STATUSES,
     )
 
     verif_map: dict[str, dict] = {}

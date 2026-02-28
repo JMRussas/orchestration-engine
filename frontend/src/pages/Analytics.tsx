@@ -114,7 +114,7 @@ export default function Analytics() {
           )}
 
           <div className="card mb-2">
-            <span className="text-dim">Total Spend:</span>{' '}
+            <span className="text-dim">Total Task Cost:</span>{' '}
             <span className="cost" style={{ fontSize: '1.25rem' }}>${cost.total_cost_usd.toFixed(4)}</span>
           </div>
         </>

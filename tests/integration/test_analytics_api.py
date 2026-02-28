@@ -6,7 +6,6 @@
 #  Used by:    pytest
 
 import time
-from datetime import datetime, timezone
 
 
 async def _get_admin_client(app_client, tmp_db):
@@ -29,13 +28,13 @@ async def _get_admin_client(app_client, tmp_db):
 
 
 async def _seed_analytics_data(tmp_db):
-    """Insert sample projects, tasks, usage_log, budget_periods, and checkpoints.
+    """Insert sample projects, tasks, usage_log, and checkpoints.
 
     Seed data summary:
       - 1 project (proj_analytics / "Analytics Test")
-      - 6 tasks: 3 haiku (2 completed, 1 failed), 3 sonnet (2 completed, 1 needs_review)
-      - 4 usage_log entries (for completed tasks: t1, t2, t4, t6)
-      - 1 budget_periods daily entry (2025-01-15)
+      - 7 tasks: 3 haiku (2 completed, 1 failed),
+                 4 sonnet (2 completed, 1 needs_review, 1 cancelled)
+      - 5 usage_log entries (for terminal tasks with API spend: t1, t2, t4, t6, t7)
       - 2 checkpoints (1 unresolved, 1 resolved)
     """
     now = time.time()
@@ -61,6 +60,7 @@ async def _seed_analytics_data(tmp_db):
         ("t4", "sonnet", "completed", 0.05, 0, "gaps_found", 0, now - 70, now - 20),
         ("t5", "sonnet", "needs_review", 0.04, 0, "human_needed", 1, now - 60, None),
         ("t6", "sonnet", "completed", 0.06, 1, "passed", 0, now - 55, now - 10),
+        ("t7", "sonnet", "cancelled", 0.02, 0, None, 0, now - 50, now - 5),
     ]
     for tid, tier, status, cost, wave, verif, retries, started, completed in tasks:
         await tmp_db.execute_write(
@@ -72,27 +72,17 @@ async def _seed_analytics_data(tmp_db):
              status, tier, wave, retries, cost, verif, started, completed, now, now),
         )
 
-    # Usage log entries for completed tasks only
-    # (matches the 4 tasks that have actual API spend recorded)
+    # Usage log entries for terminal tasks with API spend
     # haiku tasks: t1=0.005, t2=0.003
-    # sonnet tasks: t4=0.05, t6=0.06
-    # Total: 0.118
-    for tid, cost in [("t1", 0.005), ("t2", 0.003), ("t4", 0.05), ("t6", 0.06)]:
+    # sonnet tasks: t4=0.05, t6=0.06, t7=0.02 (cancelled but had spend)
+    # Total: 0.138
+    for tid, cost in [("t1", 0.005), ("t2", 0.003), ("t4", 0.05), ("t6", 0.06), ("t7", 0.02)]:
         await tmp_db.execute_write(
             "INSERT INTO usage_log (project_id, task_id, provider, model, "
             "prompt_tokens, completion_tokens, cost_usd, purpose, timestamp) "
             "VALUES (?, ?, 'anthropic', 'claude-3-haiku', 100, 50, ?, 'execution', ?)",
             (project_id, tid, cost, now),
         )
-
-    # Budget periods — use today's date so it falls within any days window
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    await tmp_db.execute_write(
-        "INSERT INTO budget_periods (period_key, period_type, total_cost_usd, "
-        "api_call_count) "
-        "VALUES (?, 'daily', 0.118, 4)",
-        (today,),
-    )
 
     # Checkpoints: 1 unresolved, 1 resolved
     await tmp_db.execute_write(
@@ -203,10 +193,10 @@ class TestCostBreakdown:
         assert resp.status_code == 200
         data = resp.json()
 
-        # By project — all from usage_log
+        # By project — all terminal tasks from usage_log
         assert len(data["by_project"]) == 1
         assert data["by_project"][0]["project_name"] == "Analytics Test"
-        assert data["by_project"][0]["task_count"] == 4  # 4 distinct task_ids in usage_log
+        assert data["by_project"][0]["task_count"] == 5  # t1, t2, t4, t6, t7
 
         # By model tier — from usage_log joined with tasks (terminal only)
         tiers = {t["model_tier"]: t for t in data["by_model_tier"]}
@@ -214,21 +204,19 @@ class TestCostBreakdown:
         assert "sonnet" in tiers
         # haiku: t1 + t2 usage_log (both completed, terminal) = 2 distinct tasks
         assert tiers["haiku"]["task_count"] == 2
-        # sonnet: t4 + t6 usage_log (both completed, terminal) = 2 distinct tasks
-        # (t5 is needs_review but has no usage_log entry)
-        assert tiers["sonnet"]["task_count"] == 2
+        # sonnet: t4 + t6 + t7 usage_log (completed + cancelled, all terminal) = 3 tasks
+        assert tiers["sonnet"]["task_count"] == 3
         # haiku cost: 0.005 + 0.003 = 0.008
         assert tiers["haiku"]["cost_usd"] == 0.008
-        # sonnet cost: 0.05 + 0.06 = 0.11
-        assert tiers["sonnet"]["cost_usd"] == 0.11
+        # sonnet cost: 0.05 + 0.06 + 0.02 = 0.13
+        assert tiers["sonnet"]["cost_usd"] == 0.13
 
-        # Daily trend
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        # Daily trend — from usage_log (same source as by_project/by_model_tier)
         assert len(data["daily_trend"]) == 1
-        assert data["daily_trend"][0]["date"] == today
+        assert data["daily_trend"][0]["api_calls"] == 5
 
-        # Total cost = sum of by_project = 0.005 + 0.003 + 0.05 + 0.06 = 0.118
-        assert data["total_cost_usd"] == 0.118
+        # Total cost = sum of by_project = 0.005 + 0.003 + 0.05 + 0.06 + 0.02 = 0.138
+        assert data["total_cost_usd"] == 0.138
 
     async def test_days_param(self, app_client, tmp_db):
         client = await _get_admin_client(app_client, tmp_db)
@@ -326,8 +314,8 @@ class TestTaskOutcomes:
         assert tiers["sonnet"]["completed"] == 2
         assert tiers["sonnet"]["failed"] == 0
         assert tiers["sonnet"]["needs_review"] == 1
-        assert tiers["sonnet"]["total"] == 3
-        assert tiers["sonnet"]["success_rate"] == round(2 / 3, 4)
+        assert tiers["sonnet"]["total"] == 4  # 2 completed + 1 needs_review + 1 cancelled
+        assert tiers["sonnet"]["success_rate"] == round(2 / 4, 4)
 
         # Verification by tier
         verif = {v["model_tier"]: v for v in data["verification_by_tier"]}
@@ -412,7 +400,7 @@ class TestEfficiency:
         assert retries["haiku"]["total_retries"] == 0
 
         assert "sonnet" in retries
-        assert retries["sonnet"]["total_tasks"] == 3  # 2 completed + 1 needs_review
+        assert retries["sonnet"]["total_tasks"] == 4  # 2 completed + 1 needs_review + 1 cancelled
         assert retries["sonnet"]["tasks_with_retries"] == 1  # t5 has retry_count=1
         assert retries["sonnet"]["total_retries"] == 1
 
@@ -420,15 +408,15 @@ class TestEfficiency:
         assert data["checkpoint_count"] == 2
         assert data["unresolved_checkpoint_count"] == 1
 
-        # Wave throughput — per-project, only tasks with both started_at and completed_at
-        # t1: wave 0, t2: wave 1, t3: wave 2, t4: wave 0, t6: wave 1
+        # Wave throughput — per-project, terminal tasks with both started_at and completed_at
+        # t1: wave 0, t2: wave 1, t3: wave 2, t4: wave 0, t6: wave 1, t7: wave 0
         # (t5 has no completed_at, excluded)
         waves = data["wave_throughput"]
         assert len(waves) == 3  # waves 0, 1, 2 for proj_analytics
         assert all(w["project_id"] == "proj_analytics" for w in waves)
         assert all(w["project_name"] == "Analytics Test" for w in waves)
         wave_map = {w["wave"]: w for w in waves}
-        assert wave_map[0]["task_count"] == 2  # t1 + t4
+        assert wave_map[0]["task_count"] == 3  # t1 + t4 + t7
         assert wave_map[1]["task_count"] == 2  # t2 + t6
         assert wave_map[2]["task_count"] == 1  # t3
         assert wave_map[0]["avg_duration_seconds"] is not None
@@ -445,5 +433,5 @@ class TestEfficiency:
         assert "sonnet" in eff
         assert eff["sonnet"]["tasks_completed"] == 2
         assert eff["sonnet"]["verification_pass_count"] == 1  # only t6 passed
-        # sonnet cost from usage_log: 0.05 + 0.06 = 0.11
-        assert eff["sonnet"]["cost_usd"] == 0.11
+        # sonnet cost from usage_log: 0.05 + 0.06 + 0.02 = 0.13
+        assert eff["sonnet"]["cost_usd"] == 0.13

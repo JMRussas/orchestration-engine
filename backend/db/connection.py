@@ -165,6 +165,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority);
 CREATE INDEX IF NOT EXISTS idx_tasks_wave ON tasks(wave);
 CREATE INDEX IF NOT EXISTS idx_deps_depends ON task_deps(depends_on);
 CREATE INDEX IF NOT EXISTS idx_usage_project ON usage_log(project_id);
+CREATE INDEX IF NOT EXISTS idx_usage_task ON usage_log(task_id);
 CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage_log(timestamp);
 CREATE INDEX IF NOT EXISTS idx_budget_type ON budget_periods(period_type);
 CREATE INDEX IF NOT EXISTS idx_events_project ON task_events(project_id);

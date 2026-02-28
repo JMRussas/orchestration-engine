@@ -83,7 +83,7 @@ describe('Analytics', () => {
     expect(await screen.findByText('Cost Breakdown')).toBeInTheDocument()
     // Project Alpha appears in cost breakdown AND wave throughput tables
     expect(screen.getAllByText('Project Alpha').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('Total Spend:')).toBeInTheDocument()
+    expect(screen.getByText('Total Task Cost:')).toBeInTheDocument()
   })
 
   it('renders model tier badges', async () => {
