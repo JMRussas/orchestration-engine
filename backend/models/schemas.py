@@ -285,6 +285,90 @@ class AdminStats(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Analytics
+# ---------------------------------------------------------------------------
+
+class CostByProject(BaseModel):
+    project_id: str
+    project_name: str
+    cost_usd: float
+    task_count: int
+
+
+class CostByModelTier(BaseModel):
+    model_tier: str
+    cost_usd: float
+    task_count: int
+    avg_cost_per_task: float
+
+
+class DailyCostTrend(BaseModel):
+    date: str
+    cost_usd: float
+    api_calls: int
+
+
+class AnalyticsCostBreakdown(BaseModel):
+    by_project: list[CostByProject]
+    by_model_tier: list[CostByModelTier]
+    daily_trend: list[DailyCostTrend]
+    total_cost_usd: float
+
+
+class TaskOutcomeByTier(BaseModel):
+    model_tier: str
+    total: int
+    completed: int
+    failed: int
+    needs_review: int
+    success_rate: float
+
+
+class VerificationByTier(BaseModel):
+    model_tier: str
+    total_verified: int
+    passed: int
+    gaps_found: int
+    human_needed: int
+    pass_rate: float
+
+
+class AnalyticsTaskOutcomes(BaseModel):
+    by_tier: list[TaskOutcomeByTier]
+    verification_by_tier: list[VerificationByTier]
+
+
+class RetryByTier(BaseModel):
+    model_tier: str
+    total_tasks: int
+    tasks_with_retries: int
+    total_retries: int
+    retry_rate: float
+
+
+class WaveThroughput(BaseModel):
+    wave: int
+    task_count: int
+    avg_duration_seconds: float | None = None
+
+
+class CostEfficiencyItem(BaseModel):
+    model_tier: str
+    cost_usd: float
+    tasks_completed: int
+    verification_pass_count: int
+    cost_per_pass: float | None = None
+
+
+class AnalyticsEfficiency(BaseModel):
+    retries_by_tier: list[RetryByTier]
+    checkpoint_count: int
+    unresolved_checkpoint_count: int
+    wave_throughput: list[WaveThroughput]
+    cost_efficiency: list[CostEfficiencyItem]
+
+
+# ---------------------------------------------------------------------------
 # RAG
 # ---------------------------------------------------------------------------
 

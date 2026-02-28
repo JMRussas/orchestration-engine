@@ -40,6 +40,7 @@ class Container(containers.DeclarativeContainer):
             "backend.routes.auth",
             "backend.routes.checkpoints",
             "backend.routes.admin",
+            "backend.routes.analytics",
             "backend.routes.rag",
             "backend.routes.auth_oidc",
             "backend.middleware.auth",

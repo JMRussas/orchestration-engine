@@ -28,9 +28,14 @@ export default function Layout() {
           RAG Databases
         </NavLink>
         {user?.role === 'admin' && (
-          <NavLink to="/admin" className={({ isActive }) => isActive ? 'active' : ''}>
-            Admin
-          </NavLink>
+          <>
+            <NavLink to="/admin" className={({ isActive }) => isActive ? 'active' : ''}>
+              Admin
+            </NavLink>
+            <NavLink to="/analytics" className={({ isActive }) => isActive ? 'active' : ''}>
+              Analytics
+            </NavLink>
+          </>
         )}
         {user && (
           <div className="sidebar-user">

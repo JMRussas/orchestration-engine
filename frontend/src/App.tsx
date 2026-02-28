@@ -18,6 +18,7 @@ import TaskDetail from './pages/TaskDetail'
 import Usage from './pages/Usage'
 import Services from './pages/Services'
 import Admin from './pages/Admin'
+import Analytics from './pages/Analytics'
 import RAG from './pages/RAG'
 import NotFound from './pages/NotFound'
 
@@ -41,6 +42,7 @@ export default function App() {
                 <Route path="/usage" element={<Usage />} />
                 <Route path="/services" element={<Services />} />
                 <Route path="/admin" element={<Admin />} />
+                <Route path="/analytics" element={<Analytics />} />
                 <Route path="/rag" element={<RAG />} />
               </Route>
             </Route>
