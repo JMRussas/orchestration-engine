@@ -58,11 +58,11 @@ class OIDCService:
 
         Returns (authorization_url, state, nonce).
         """
+        prov = self._get_provider(provider_name)
+
         # Validate redirect_uri against allowlist (if configured)
         if AUTH_OIDC_REDIRECT_URIS and redirect_uri not in AUTH_OIDC_REDIRECT_URIS:
             raise OIDCError("Redirect URI not allowed")
-
-        prov = self._get_provider(provider_name)
         metadata = await self._fetch_metadata(prov)
 
         state = secrets.token_urlsafe(32)
