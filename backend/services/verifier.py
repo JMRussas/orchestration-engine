@@ -112,6 +112,6 @@ async def verify_output(
         "gaps_found": VerificationResult.GAPS_FOUND,
         "human_needed": VerificationResult.HUMAN_NEEDED,
     }
-    result = verdict_map.get(verdict_str, VerificationResult.PASSED)
+    result = verdict_map.get(verdict_str, VerificationResult.HUMAN_NEEDED)
 
     return {"result": result, "notes": notes, "cost_usd": cost}

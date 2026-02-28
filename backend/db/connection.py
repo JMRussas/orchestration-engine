@@ -9,7 +9,6 @@
 import asyncio
 import logging
 import sqlite3
-import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -222,31 +221,7 @@ class Database:
             await self._conn.executescript(_SCHEMA)
             await self._conn.commit()
 
-        # Recover any interrupted jobs from previous runs
-        await self._recover_interrupted()
-
         logger.info("Database initialized at %s", self._path)
-
-    async def _recover_interrupted(self):
-        """Mark any tasks stuck in 'running' or 'queued' as failed."""
-        if not self._conn:
-            return
-        now = time.time()
-        cursor = await self._conn.execute(
-            "UPDATE tasks SET status = 'failed', "
-            "error = 'Server restart - task interrupted', "
-            "updated_at = ? WHERE status IN ('running', 'queued')",
-            (now,),
-        )
-        if cursor.rowcount > 0:
-            logger.info("Recovered %d interrupted task(s)", cursor.rowcount)
-        # Also mark projects that were 'executing' as needing attention
-        await self._conn.execute(
-            "UPDATE projects SET status = 'paused', updated_at = ? "
-            "WHERE status = 'executing'",
-            (now,),
-        )
-        await self._conn.commit()
 
     @property
     def conn(self) -> aiosqlite.Connection:

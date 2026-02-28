@@ -20,8 +20,8 @@ import anthropic
 from backend.config import (
     ANTHROPIC_API_KEY,
     MAX_CONCURRENT_TASKS,
+    RESOURCE_SKIP_SECONDS,
     SHUTDOWN_GRACE_SECONDS,
-    STALE_TASK_THRESHOLD_SECONDS,
     TICK_INTERVAL,
     WAVE_CHECKPOINTS,
 )
@@ -112,6 +112,7 @@ class Executor:
             self._client = None
         self._dispatched.clear()
         self._retry_after.clear()
+        self._resource_skip_until.clear()
         logger.info("Executor stopped")
 
     async def _run_loop(self):
@@ -126,15 +127,15 @@ class Executor:
     async def _recover_stale_tasks(self):
         """Reset tasks stuck in 'running' or 'queued' from a prior crash.
 
-        Only recovers tasks whose updated_at is older than the configured
-        stale threshold (default 5 min). Increments retry_count so the task
-        doesn't silently restart without tracking the failed attempt.
+        Runs once on startup before the tick loop — all running/queued tasks
+        are stale by definition since no executor was dispatching them.
+        Only increments retry_count for RUNNING tasks (QUEUED tasks hadn't
+        started execution, so consuming a retry attempt would be wrong).
         """
-        cutoff = time.time() - STALE_TASK_THRESHOLD_SECONDS
         stale = await self._db.fetchall(
-            "SELECT id, title, project_id, retry_count FROM tasks "
-            "WHERE status IN (?, ?) AND updated_at < ?",
-            (TaskStatus.RUNNING, TaskStatus.QUEUED, cutoff),
+            "SELECT id, title, status, project_id, retry_count FROM tasks "
+            "WHERE status IN (?, ?)",
+            (TaskStatus.RUNNING, TaskStatus.QUEUED),
         )
         if not stale:
             return
@@ -151,13 +152,23 @@ class Executor:
             has_unmet_deps = dep_count and dep_count["cnt"] > 0
             new_status = TaskStatus.BLOCKED if has_unmet_deps else TaskStatus.PENDING
 
-            await self._db.execute_write(
-                "UPDATE tasks SET status = ?, retry_count = retry_count + 1, "
-                "error = ?, updated_at = ? WHERE id = ?",
-                (new_status,
-                 f"Recovered from stale state (retry {row['retry_count'] + 1})",
-                 now, row["id"]),
-            )
+            # Only count as a retry attempt if the task was actually running
+            if row["status"] == TaskStatus.RUNNING:
+                await self._db.execute_write(
+                    "UPDATE tasks SET status = ?, retry_count = retry_count + 1, "
+                    "error = ?, updated_at = ? WHERE id = ?",
+                    (new_status,
+                     f"Recovered from stale state (retry {row['retry_count'] + 1})",
+                     now, row["id"]),
+                )
+            else:
+                await self._db.execute_write(
+                    "UPDATE tasks SET status = ?, "
+                    "error = ?, updated_at = ? WHERE id = ?",
+                    (new_status,
+                     "Recovered from queued state after restart",
+                     now, row["id"]),
+                )
         logger.info("Recovered %d stale task(s) to pending/blocked", len(stale))
 
     async def _tick(self):
@@ -348,14 +359,14 @@ class Executor:
     def _check_resource(self, resource_name: str) -> bool:
         """Check if a resource is available, with circuit breaker caching.
 
-        If a resource was recently found offline, skip re-checking for 30s
-        to avoid hammering health endpoints on every tick.
+        If a resource was recently found offline, skip re-checking for the
+        configured skip period to avoid hammering health endpoints on every tick.
         """
         now = time.time()
         if now < self._resource_skip_until.get(resource_name, 0):
             return False
         if not self._resource_monitor.is_available(resource_name):
-            self._resource_skip_until[resource_name] = now + 30.0
+            self._resource_skip_until[resource_name] = now + RESOURCE_SKIP_SECONDS
             return False
         self._resource_skip_until.pop(resource_name, None)
         return True

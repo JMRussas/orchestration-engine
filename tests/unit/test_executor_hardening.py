@@ -85,10 +85,10 @@ class TestStaleTaskRecovery:
         assert row["retry_count"] == 2  # Was 1, incremented to 2
         assert "Recovered from stale state" in row["error"]
 
-    async def test_stale_queued_task_recovered(self, tmp_db, executor_with_db):
-        """Tasks stuck in 'queued' longer than threshold are also recovered."""
+    async def test_queued_task_recovered_without_retry_increment(self, tmp_db, executor_with_db):
+        """Queued tasks are recovered but retry_count is NOT incremented
+        (they hadn't started execution, so no retry was consumed)."""
         now = time.time()
-        stale_time = now - 600
 
         await tmp_db.execute_write(
             "INSERT INTO projects (id, name, requirements, status, created_at, updated_at) "
@@ -107,46 +107,16 @@ class TestStaleTaskRecovery:
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ("task_stale_002", "proj_stale_002", "plan_stale_002", "Queued Task",
              "Do something", "code", 0, TaskStatus.QUEUED, "haiku", 0,
-             0, 5, stale_time, stale_time),
+             0, 5, now, now),
         )
 
         await executor_with_db._recover_stale_tasks()
 
-        row = await tmp_db.fetchone("SELECT status, retry_count FROM tasks WHERE id = ?",
+        row = await tmp_db.fetchone("SELECT status, retry_count, error FROM tasks WHERE id = ?",
                                      ("task_stale_002",))
         assert row["status"] == TaskStatus.PENDING
-        assert row["retry_count"] == 1
-
-    async def test_recent_running_task_not_recovered(self, tmp_db, executor_with_db):
-        """Tasks recently updated (within threshold) should NOT be recovered."""
-        now = time.time()
-
-        await tmp_db.execute_write(
-            "INSERT INTO projects (id, name, requirements, status, created_at, updated_at) "
-            "VALUES (?, ?, ?, 'executing', ?, ?)",
-            ("proj_stale_003", "Recent Test", "test", now, now),
-        )
-        await tmp_db.execute_write(
-            "INSERT INTO plans (id, project_id, version, model_used, plan_json, status, created_at) "
-            "VALUES (?, ?, 1, 'test-model', ?, 'approved', ?)",
-            ("plan_stale_003", "proj_stale_003", json.dumps({"summary": "test", "tasks": []}), now),
-        )
-        await tmp_db.execute_write(
-            "INSERT INTO tasks (id, project_id, plan_id, title, description, task_type, "
-            "priority, status, model_tier, wave, retry_count, max_retries, "
-            "created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            ("task_stale_003", "proj_stale_003", "plan_stale_003", "Recent Task",
-             "Do something", "code", 0, TaskStatus.RUNNING, "haiku", 0,
-             0, 5, now, now),  # updated_at = now, within threshold
-        )
-
-        await executor_with_db._recover_stale_tasks()
-
-        row = await tmp_db.fetchone("SELECT status, retry_count FROM tasks WHERE id = ?",
-                                     ("task_stale_003",))
-        assert row["status"] == TaskStatus.RUNNING  # Unchanged
-        assert row["retry_count"] == 0
+        assert row["retry_count"] == 0  # NOT incremented for queued tasks
+        assert "queued state" in row["error"]
 
     async def test_no_stale_tasks_is_noop(self, tmp_db, executor_with_db):
         """Recovery with no stale tasks should complete without error."""

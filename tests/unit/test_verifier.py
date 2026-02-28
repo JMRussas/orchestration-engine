@@ -86,8 +86,8 @@ class TestVerifyOutput:
         assert result["result"] == VerificationResult.HUMAN_NEEDED
         assert "ambiguous" in result["notes"]
 
-    async def test_unparseable_response_defaults_to_passed(self):
-        """If the model returns non-JSON, verification should not block the task."""
+    async def test_unparseable_response_escalates_to_human(self):
+        """If the model returns non-JSON, verification escalates to human review."""
         response = MagicMock()
         response.content = [MagicMock(type="text", text="This isn't JSON!")]
         response.usage = MagicMock(input_tokens=50, output_tokens=20)
@@ -109,7 +109,8 @@ class TestVerifyOutput:
 
         assert result["result"] == VerificationResult.HUMAN_NEEDED
 
-    async def test_unknown_verdict_defaults_to_passed(self):
+    async def test_unknown_verdict_escalates_to_human(self):
+        """Unknown verdict string from the LLM escalates to human review."""
         client = _make_mock_client("some_unknown_verdict", "whatever")
         budget = AsyncMock()
         budget.record_spend = AsyncMock()
@@ -124,7 +125,7 @@ class TestVerifyOutput:
             task_id="task1",
         )
 
-        assert result["result"] == VerificationResult.PASSED
+        assert result["result"] == VerificationResult.HUMAN_NEEDED
 
     async def test_empty_output_sent_as_empty_marker(self):
         """Empty output should be sent as '(empty)' in the prompt."""

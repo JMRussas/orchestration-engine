@@ -96,6 +96,8 @@ async def oidc_login_redirect(
         url, state, nonce = await oidc.get_authorization_url(provider, redirect_uri)
     except NotFoundError:
         raise HTTPException(404, f"OIDC provider '{provider}' is not configured")
+    except OIDCError as e:
+        raise HTTPException(400, str(e))
     except Exception as e:
         logger.error("OIDC login redirect failed for '%s': %s", provider, e)
         raise HTTPException(502, "Failed to connect to OIDC provider")

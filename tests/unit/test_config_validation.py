@@ -52,6 +52,14 @@ class TestValidateConfig:
             with pytest.raises(ConfigError, match="missing required 'issuer'"):
                 validate_config()
 
+    def test_raises_on_oidc_provider_missing_client_id(self):
+        bad_provider = [{"name": "p", "issuer": "https://x.com", "client_secret": "sec"}]
+        with patch("backend.config.AUTH_SECRET_KEY", "a" * 32), \
+             patch("backend.config.ANTHROPIC_API_KEY", "sk-test"), \
+             patch("backend.config.AUTH_OIDC_PROVIDERS", bad_provider):
+            with pytest.raises(ConfigError, match="missing required 'client_id'"):
+                validate_config()
+
     def test_raises_on_oidc_provider_missing_client_secret(self):
         bad_provider = [{"name": "p", "issuer": "https://x.com", "client_id": "id"}]
         with patch("backend.config.AUTH_SECRET_KEY", "a" * 32), \

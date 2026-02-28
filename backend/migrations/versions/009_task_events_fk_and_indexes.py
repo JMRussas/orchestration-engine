@@ -15,6 +15,17 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Clean orphaned task_events before adding FK constraints —
+    # batch_alter_table copies data to a temp table WITH constraints,
+    # so orphaned rows would cause INSERT failures during the copy.
+    op.execute(
+        "DELETE FROM task_events WHERE project_id NOT IN (SELECT id FROM projects)"
+    )
+    op.execute(
+        "DELETE FROM task_events WHERE task_id IS NOT NULL "
+        "AND task_id NOT IN (SELECT id FROM tasks)"
+    )
+
     # Add FK constraints to task_events (batch mode required for SQLite)
     with op.batch_alter_table("task_events") as batch_op:
         batch_op.create_foreign_key(

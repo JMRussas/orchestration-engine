@@ -31,8 +31,9 @@ async def executor_with_db(tmp_db):
     mock_budget = AsyncMock()
     mock_budget.can_spend = AsyncMock(return_value=True)
     mock_budget.reserve_spend = AsyncMock(return_value=True)
-    mock_budget.can_spend_project = AsyncMock(return_value=True)
+    mock_budget.reserve_spend_project = AsyncMock(return_value=True)
     mock_budget.release_reservation = AsyncMock()
+    mock_budget.release_reservation_project = AsyncMock()
     mock_budget.record_spend = AsyncMock()
 
     mock_progress = AsyncMock()
@@ -681,6 +682,82 @@ class TestExecuteTask:
         )
 
         assert "task_001" not in executor_with_db._dispatched
+
+    @patch("backend.services.task_lifecycle.VERIFICATION_ENABLED", False)
+    @patch("backend.services.claude_agent.calculate_cost", return_value=0.001)
+    @patch("backend.services.claude_agent.get_model_id", return_value="claude-haiku-4-5-20251001")
+    async def test_budget_exhausted_sets_needs_review(self, _mock_model, _mock_cost, tmp_db, executor_with_db):
+        """When run_claude_task returns budget_exhausted=True, task goes to NEEDS_REVIEW."""
+        await _seed_task(tmp_db)
+
+        mock_client = AsyncMock()
+        # First call returns tool_use to trigger the budget check loop
+        response = _make_claude_response("Partial output")
+        mock_client.messages.create = AsyncMock(return_value=response)
+
+        # Make can_spend return False after first call to trigger budget_exhausted
+        call_count = 0
+
+        async def can_spend_side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count > 1:
+                return False
+            return True
+
+        executor_with_db._budget.can_spend = AsyncMock(side_effect=can_spend_side_effect)
+
+        task_row = await tmp_db.fetchone("SELECT * FROM tasks WHERE id = ?", ("task_001",))
+
+        # Directly test execute_task with a mocked run_claude_task that returns budget_exhausted
+        with patch("backend.services.task_lifecycle.run_claude_task", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = {
+                "output": "Partial output before budget ran out",
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "cost_usd": 0.01,
+                "model_used": "claude-haiku-4-5-20251001",
+                "budget_exhausted": True,
+            }
+
+            await execute_task(
+                task_row=task_row, est_cost=0.01, db=tmp_db,
+                budget=executor_with_db._budget, progress=executor_with_db._progress,
+                tool_registry=executor_with_db._tool_registry,
+                http_client=None, client=mock_client,
+                semaphore=executor_with_db._semaphore,
+                dispatched=executor_with_db._dispatched,
+                retry_after=executor_with_db._retry_after,
+            )
+
+        row = await tmp_db.fetchone("SELECT status, error, output_text FROM tasks WHERE id = ?", ("task_001",))
+        assert row["status"] == TaskStatus.NEEDS_REVIEW
+        assert "Budget exhausted" in row["error"]
+        assert row["output_text"] == "Partial output before budget ran out"
+
+    @patch("backend.services.task_lifecycle.VERIFICATION_ENABLED", False)
+    @patch("backend.services.claude_agent.calculate_cost", return_value=0.001)
+    @patch("backend.services.claude_agent.get_model_id", return_value="claude-haiku-4-5-20251001")
+    async def test_project_budget_reservation_released(self, _mock_model, _mock_cost, tmp_db, executor_with_db):
+        """Per-project budget reservation released alongside global reservation."""
+        await _seed_task(tmp_db)
+
+        mock_client = AsyncMock()
+        mock_client.messages.create = AsyncMock(return_value=_make_claude_response("Done"))
+
+        task_row = await tmp_db.fetchone("SELECT * FROM tasks WHERE id = ?", ("task_001",))
+        await execute_task(
+            task_row=task_row, est_cost=0.05, db=tmp_db,
+            budget=executor_with_db._budget, progress=executor_with_db._progress,
+            tool_registry=executor_with_db._tool_registry,
+            http_client=None, client=mock_client,
+            semaphore=executor_with_db._semaphore,
+            dispatched=executor_with_db._dispatched,
+            retry_after=executor_with_db._retry_after,
+        )
+
+        executor_with_db._budget.release_reservation.assert_awaited_once_with(0.05)
+        executor_with_db._budget.release_reservation_project.assert_awaited_once_with("proj_001", 0.05)
 
 
 # ---------------------------------------------------------------------------

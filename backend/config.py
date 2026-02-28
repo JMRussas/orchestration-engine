@@ -116,7 +116,7 @@ VERIFICATION_MODEL = cfg("execution.verification_model", "claude-haiku-4-5-20251
 VERIFICATION_MAX_TOKENS = cfg("execution.verification_max_tokens", 1024)
 CHECKPOINT_ON_RETRY_EXHAUSTED = cfg("execution.checkpoint_on_retry_exhausted", True)
 SHUTDOWN_GRACE_SECONDS = cfg("execution.shutdown_grace_seconds", 30)
-STALE_TASK_THRESHOLD_SECONDS = cfg("execution.stale_task_threshold_seconds", 300)
+RESOURCE_SKIP_SECONDS = cfg("execution.resource_skip_seconds", 30)
 
 # Model pricing
 MODEL_PRICING = cfg("model_pricing", {})

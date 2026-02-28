@@ -37,6 +37,9 @@ _TRANSIENT_ERRORS = (
     httpx.ReadTimeout,
 )
 
+# Maximum verification feedback entries kept in context to prevent unbounded growth
+_MAX_VERIFICATION_FEEDBACKS = 3
+
 
 async def create_checkpoint(
     *, project_id, task_id, task_row, error_msg, db, progress,
@@ -128,7 +131,6 @@ async def verify_task_output(
         max_retries = task_row["max_retries"]
         if retry_count < max_retries:
             # Auto-retry with verification feedback appended to context
-            _MAX_VERIFICATION_FEEDBACKS = 3
             ctx = json.loads(task_row["context_json"]) if task_row["context_json"] else []
             # Cap feedback entries to prevent unbounded context growth
             feedbacks = [e for e in ctx if e.get("type") == "verification_feedback"]
@@ -367,3 +369,4 @@ async def execute_task(
         dispatched.discard(task_id)
         if est_cost > 0:
             await budget.release_reservation(est_cost)
+            await budget.release_reservation_project(task_row["project_id"], est_cost)
