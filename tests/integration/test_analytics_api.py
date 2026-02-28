@@ -6,6 +6,7 @@
 #  Used by:    pytest
 
 import time
+from datetime import datetime, timezone
 
 
 async def _get_admin_client(app_client, tmp_db):
@@ -84,11 +85,13 @@ async def _seed_analytics_data(tmp_db):
             (project_id, tid, cost, now),
         )
 
-    # Budget periods
+    # Budget periods — use today's date so it falls within any days window
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     await tmp_db.execute_write(
         "INSERT INTO budget_periods (period_key, period_type, total_cost_usd, "
         "api_call_count) "
-        "VALUES ('2025-01-15', 'daily', 0.118, 4)"
+        "VALUES (?, 'daily', 0.118, 4)",
+        (today,),
     )
 
     # Checkpoints: 1 unresolved, 1 resolved
@@ -144,6 +147,38 @@ class TestAnalyticsAuth:
         resp = await client.get("/api/admin/analytics/cost-breakdown")
         assert resp.status_code == 403
 
+    async def test_task_outcomes_requires_admin(self, app_client, tmp_db):
+        client = await _get_admin_client(app_client, tmp_db)
+        resp = await client.post("/api/auth/register", json={
+            "email": "user2@example.com",
+            "password": "userpass123",
+            "display_name": "User2",
+        })
+        assert resp.status_code == 201
+        resp = await client.post("/api/auth/login", json={
+            "email": "user2@example.com",
+            "password": "userpass123",
+        })
+        client.headers["Authorization"] = f"Bearer {resp.json()['access_token']}"
+        resp = await client.get("/api/admin/analytics/task-outcomes")
+        assert resp.status_code == 403
+
+    async def test_efficiency_requires_admin(self, app_client, tmp_db):
+        client = await _get_admin_client(app_client, tmp_db)
+        resp = await client.post("/api/auth/register", json={
+            "email": "user3@example.com",
+            "password": "userpass123",
+            "display_name": "User3",
+        })
+        assert resp.status_code == 201
+        resp = await client.post("/api/auth/login", json={
+            "email": "user3@example.com",
+            "password": "userpass123",
+        })
+        client.headers["Authorization"] = f"Bearer {resp.json()['access_token']}"
+        resp = await client.get("/api/admin/analytics/efficiency")
+        assert resp.status_code == 403
+
 
 # ---------------------------------------------------------------------------
 # Cost Breakdown
@@ -188,8 +223,9 @@ class TestCostBreakdown:
         assert tiers["sonnet"]["cost_usd"] == 0.11
 
         # Daily trend
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         assert len(data["daily_trend"]) == 1
-        assert data["daily_trend"][0]["date"] == "2025-01-15"
+        assert data["daily_trend"][0]["date"] == today
 
         # Total cost = sum of by_project = 0.005 + 0.003 + 0.05 + 0.06 = 0.118
         assert data["total_cost_usd"] == 0.118

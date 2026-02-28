@@ -143,6 +143,25 @@ describe('Analytics', () => {
     })
   })
 
+  it('renders dash for null cost_per_pass', async () => {
+    const effWithNull: Efficiency = {
+      ...mockEfficiency,
+      cost_efficiency: [
+        { model_tier: 'haiku', cost_usd: 0.05, tasks_completed: 2, verification_pass_count: 0, cost_per_pass: null },
+      ],
+    }
+    mockGetCostBreakdown.mockResolvedValue(mockCost)
+    mockGetTaskOutcomes.mockResolvedValue(mockOutcomes)
+    mockGetEfficiency.mockResolvedValue(effWithNull)
+
+    render(<Analytics />)
+
+    await waitFor(() => {
+      // cost_per_pass is null → should render '-'
+      expect(screen.getByText('-')).toBeInTheDocument()
+    })
+  })
+
   it('shows error on all fetch failures', async () => {
     mockGetCostBreakdown.mockRejectedValue(new Error('Network error'))
     mockGetTaskOutcomes.mockRejectedValue(new Error('Network error'))

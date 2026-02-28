@@ -10,6 +10,7 @@
 #  Used by:    app.py
 
 import time
+from datetime import datetime, timedelta, timezone
 
 from dependency_injector.wiring import inject, Provide
 from fastapi import APIRouter, Depends, Query
@@ -17,6 +18,7 @@ from fastapi import APIRouter, Depends, Query
 from backend.container import Container
 from backend.db.connection import Database
 from backend.middleware.auth import require_admin
+from backend.models.enums import TaskStatus
 from backend.models.schemas import (
     AnalyticsCostBreakdown,
     AnalyticsEfficiency,
@@ -33,7 +35,12 @@ from backend.models.schemas import (
 
 router = APIRouter(prefix="/admin/analytics", tags=["analytics"])
 
-_TERMINAL_STATUSES = "('completed', 'failed', 'needs_review')"
+_TERMINAL_STATUSES = (
+    TaskStatus.COMPLETED.value,
+    TaskStatus.FAILED.value,
+    TaskStatus.NEEDS_REVIEW.value,
+)
+_TERMINAL_PLACEHOLDERS = ",".join("?" * len(_TERMINAL_STATUSES))
 
 
 # ---------------------------------------------------------------------------
@@ -53,15 +60,20 @@ async def cost_breakdown(
     all three sections to the requested time window.
     """
     cutoff = time.time() - (days * 86400)
+    date_cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
 
-    # By project — from usage_log joined with projects
+    # By project — from usage_log joined with tasks (terminal only) and projects
+    # Same terminal-status filter as by_model_tier so totals agree.
     project_rows = await db.fetchall(
         "SELECT u.project_id, p.name as project_name, "
         "SUM(u.cost_usd) as cost, COUNT(DISTINCT u.task_id) as task_count "
-        "FROM usage_log u LEFT JOIN projects p ON p.id = u.project_id "
-        "WHERE u.project_id IS NOT NULL AND u.timestamp >= ? "
+        "FROM usage_log u "
+        "JOIN tasks t ON t.id = u.task_id "
+        "LEFT JOIN projects p ON p.id = u.project_id "
+        f"WHERE t.status IN ({_TERMINAL_PLACEHOLDERS}) "
+        "AND u.project_id IS NOT NULL AND u.timestamp >= ? "
         "GROUP BY u.project_id ORDER BY cost DESC",
-        (cutoff,),
+        (*_TERMINAL_STATUSES, cutoff),
     )
     by_project = [
         CostByProject(
@@ -79,9 +91,9 @@ async def cost_breakdown(
         "COUNT(DISTINCT u.task_id) as task_count "
         "FROM usage_log u "
         "JOIN tasks t ON t.id = u.task_id "
-        f"WHERE t.status IN {_TERMINAL_STATUSES} AND u.timestamp >= ? "
+        f"WHERE t.status IN ({_TERMINAL_PLACEHOLDERS}) AND u.timestamp >= ? "
         "GROUP BY t.model_tier",
-        (cutoff,),
+        (*_TERMINAL_STATUSES, cutoff),
     )
     by_model_tier = [
         CostByModelTier(
@@ -93,12 +105,12 @@ async def cost_breakdown(
         for r in tier_rows
     ]
 
-    # Daily trend — from pre-aggregated budget_periods, filtered by date
+    # Daily trend — from pre-aggregated budget_periods, filtered by date range
     trend_rows = await db.fetchall(
         "SELECT period_key, total_cost_usd, api_call_count "
-        "FROM budget_periods WHERE period_type = 'daily' "
-        "ORDER BY period_key DESC LIMIT ?",
-        (days,),
+        "FROM budget_periods WHERE period_type = 'daily' AND period_key >= ? "
+        "ORDER BY period_key ASC",
+        (date_cutoff,),
     )
     daily_trend = [
         DailyCostTrend(
@@ -106,7 +118,7 @@ async def cost_breakdown(
             cost_usd=round(r["total_cost_usd"] or 0, 6),
             api_calls=r["api_call_count"],
         )
-        for r in reversed(trend_rows)  # chronological order
+        for r in trend_rows
     ]
 
     total = sum(p.cost_usd for p in by_project)
@@ -134,8 +146,9 @@ async def task_outcomes(
     # Task outcomes by tier + status
     outcome_rows = await db.fetchall(
         "SELECT model_tier, status, COUNT(*) as cnt "
-        "FROM tasks WHERE status IN ('completed', 'failed', 'needs_review') "
-        "GROUP BY model_tier, status"
+        f"FROM tasks WHERE status IN ({_TERMINAL_PLACEHOLDERS}) "
+        "GROUP BY model_tier, status",
+        _TERMINAL_STATUSES,
     )
 
     # Pivot into per-tier records
@@ -209,8 +222,9 @@ async def efficiency(
         "SELECT model_tier, COUNT(*) as total, "
         "SUM(CASE WHEN retry_count > 0 THEN 1 ELSE 0 END) as with_retries, "
         "SUM(retry_count) as total_retries "
-        f"FROM tasks WHERE status IN {_TERMINAL_STATUSES} "
-        "GROUP BY model_tier"
+        f"FROM tasks WHERE status IN ({_TERMINAL_PLACEHOLDERS}) "
+        "GROUP BY model_tier",
+        _TERMINAL_STATUSES,
     )
     retries_by_tier = [
         RetryByTier(
@@ -232,14 +246,16 @@ async def efficiency(
     checkpoint_count = cp_row["total"] if cp_row else 0
     unresolved = (cp_row["unresolved"] or 0) if cp_row else 0
 
-    # Wave throughput — per-project to keep wave numbers meaningful
+    # Wave throughput — per-project, terminal statuses with timing data
     wave_rows = await db.fetchall(
         "SELECT t.project_id, p.name as project_name, t.wave, "
         "COUNT(*) as task_count, "
         "AVG(t.completed_at - t.started_at) as avg_duration "
         "FROM tasks t LEFT JOIN projects p ON p.id = t.project_id "
-        "WHERE t.completed_at IS NOT NULL AND t.started_at IS NOT NULL "
-        "GROUP BY t.project_id, t.wave ORDER BY t.project_id, t.wave"
+        f"WHERE t.status IN ({_TERMINAL_PLACEHOLDERS}) "
+        "AND t.completed_at IS NOT NULL AND t.started_at IS NOT NULL "
+        "GROUP BY t.project_id, t.wave ORDER BY t.project_id, t.wave",
+        _TERMINAL_STATUSES,
     )
     wave_throughput = [
         WaveThroughput(
@@ -260,8 +276,9 @@ async def efficiency(
         "COUNT(DISTINCT CASE WHEN t.verification_status = 'passed' THEN t.id END) as passed "
         "FROM tasks t "
         "LEFT JOIN usage_log u ON u.task_id = t.id "
-        f"WHERE t.status IN {_TERMINAL_STATUSES} "
-        "GROUP BY t.model_tier"
+        f"WHERE t.status IN ({_TERMINAL_PLACEHOLDERS}) "
+        "GROUP BY t.model_tier",
+        _TERMINAL_STATUSES,
     )
     cost_efficiency = [
         CostEfficiencyItem(
