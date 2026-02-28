@@ -202,6 +202,10 @@ All settings live in `config.json` (gitignored). See [config.example.json](confi
 | `/api/services` | GET | Bearer | External service health |
 | `/api/events/{id}?token=...` | GET (SSE) | Token | Real-time progress stream |
 
+## Development Process
+
+PR-based workflow with structured code review. Each feature ships as a pull request with review findings documented and resolved before merge. [Closed PRs](https://github.com/JMRussas/orchestration-engine/pulls?q=is%3Apr+is%3Aclosed) show the full trail — PR #5 alone addressed 23 review findings plus 16 post-implementation bugs across security, concurrency, and data integrity. 528 backend tests at 83% coverage, 118 frontend tests, CI running lint and pytest on every push.
+
 ## Limitations
 
 - **SQLite single-writer** — WAL mode allows concurrent reads, but writes are serialized. Fine for small-to-medium workloads; not designed for high-throughput multi-user.
