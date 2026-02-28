@@ -20,7 +20,6 @@ Options:
     --timeout MS        Navigation timeout in milliseconds (default: 10000)
     --viewport WxH      Viewport size (default: 1280x720)
     --full              Dump full accessibility tree (verbose)
-    --boxes             Include bounding boxes for every element
     --cookies FILE      Load cookies from a JSON file (for authenticated pages)
     --auth USER:PASS    Auto-login via /api/auth/login before navigating
 
@@ -28,12 +27,13 @@ Examples:
     python tools/ui_inspect.py
     python tools/ui_inspect.py http://localhost:5173/projects/1 --wait ".task-card"
     python tools/ui_inspect.py http://localhost:5173/admin --auth admin@test.com:password
-    python tools/ui_inspect.py --boxes --viewport 1920x1080
+    python tools/ui_inspect.py --full --viewport 1920x1080
 """
 
 import argparse
 import json
 import sys
+from urllib.parse import urlparse
 
 
 def parse_args():
@@ -43,7 +43,6 @@ def parse_args():
     parser.add_argument("--timeout", type=int, default=10000, help="Navigation timeout (ms)")
     parser.add_argument("--viewport", default="1280x720", help="Viewport WxH")
     parser.add_argument("--full", action="store_true", help="Full accessibility tree (verbose)")
-    parser.add_argument("--boxes", action="store_true", help="Include bounding boxes")
     parser.add_argument("--cookies", metavar="FILE", help="Cookie JSON file")
     parser.add_argument("--auth", metavar="USER:PASS", help="Auto-login via /api/auth/login")
     return parser.parse_args()
@@ -66,10 +65,10 @@ def _login(page, base_url: str, credentials: str):
         print(f"ERROR: No token in login response: {body}", file=sys.stderr)
         sys.exit(1)
     # Store token in localStorage so the React app picks it up
-    page.evaluate(f"localStorage.setItem('token', '{token}')")
+    page.evaluate("(t) => localStorage.setItem('token', t)", token)
 
 
-def _walk_tree(node, depth=0, include_boxes=False):
+def _walk_tree(node, depth=0, full=False):
     """Recursively walk the accessibility tree and yield formatted lines."""
     role = node.get("role", "")
     name = node.get("name", "")
@@ -78,9 +77,9 @@ def _walk_tree(node, depth=0, include_boxes=False):
     skip_roles = {"none", "generic", "LineBreak"}
     children = node.get("children", [])
 
-    if role in skip_roles and not name:
+    if not full and role in skip_roles and not name:
         for child in children:
-            yield from _walk_tree(child, depth, include_boxes)
+            yield from _walk_tree(child, depth, full)
         return
 
     indent = "  " * depth
@@ -109,57 +108,10 @@ def _walk_tree(node, depth=0, include_boxes=False):
     if props:
         parts.append(f"({', '.join(props)})")
 
-    if include_boxes and "boundingBox" in node:
-        box = node["boundingBox"]
-        if box:
-            parts.append(f"@ x={box['x']:.0f} y={box['y']:.0f} w={box['width']:.0f} h={box['height']:.0f}")
-
     yield " ".join(parts)
 
     for child in children:
-        yield from _walk_tree(child, depth + 1, include_boxes)
-
-
-def _detect_overlaps(snapshot):
-    """Find elements with bounding boxes that overlap significantly."""
-    elements = []
-    _collect_boxes(snapshot, elements)
-
-    overlaps = []
-    for i, (a_desc, a_box) in enumerate(elements):
-        for b_desc, b_box in elements[i + 1:]:
-            overlap = _rect_overlap(a_box, b_box)
-            if overlap > 0.3:  # > 30% overlap
-                overlaps.append((a_desc, b_desc, f"{overlap:.0%}"))
-
-    return overlaps
-
-
-def _collect_boxes(node, result, depth=0):
-    """Collect elements that have bounding boxes."""
-    role = node.get("role", "")
-    name = node.get("name", "")
-    box = node.get("boundingBox")
-
-    if box and box.get("width", 0) > 0 and box.get("height", 0) > 0:
-        desc = f"[{role}] \"{name[:40]}\"" if name else f"[{role}]"
-        result.append((desc, box))
-
-    for child in node.get("children", []):
-        _collect_boxes(child, result, depth + 1)
-
-
-def _rect_overlap(a, b):
-    """Calculate overlap ratio between two bounding boxes (0.0 to 1.0)."""
-    x_overlap = max(0, min(a["x"] + a["width"], b["x"] + b["width"]) - max(a["x"], b["x"]))
-    y_overlap = max(0, min(a["y"] + a["height"], b["y"] + b["height"]) - max(a["y"], b["y"]))
-    intersection = x_overlap * y_overlap
-    if intersection == 0:
-        return 0.0
-    smaller_area = min(a["width"] * a["height"], b["width"] * b["height"])
-    if smaller_area == 0:
-        return 0.0
-    return intersection / smaller_area
+        yield from _walk_tree(child, depth + 1, full)
 
 
 def main():
@@ -188,8 +140,8 @@ def main():
 
         # Auto-login if credentials provided
         if args.auth:
-            base_url = args.url.split("/", 3)
-            base_url = f"{base_url[0]}//{base_url[2]}" if len(base_url) >= 3 else args.url
+            parsed = urlparse(args.url)
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
             _login(page, base_url, args.auth)
 
         # Navigate
@@ -220,16 +172,8 @@ def main():
         print("---")
 
         # Print tree
-        for line in _walk_tree(snapshot, include_boxes=args.boxes or args.full):
+        for line in _walk_tree(snapshot, full=args.full):
             print(line)
-
-        # Overlap detection (always run when boxes are available)
-        if args.boxes or args.full:
-            overlaps = _detect_overlaps(snapshot)
-            if overlaps:
-                print("\n--- OVERLAP WARNINGS ---")
-                for a, b, pct in overlaps:
-                    print(f"  {a}  overlaps  {b}  ({pct})")
 
         browser.close()
 
