@@ -26,7 +26,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
+    password_hash TEXT,
     display_name TEXT NOT NULL DEFAULT '',
     role TEXT NOT NULL DEFAULT 'user',
     is_active INTEGER NOT NULL DEFAULT 1,
@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     retry_count INTEGER NOT NULL DEFAULT 0,
     max_retries INTEGER NOT NULL DEFAULT 2,
     wave INTEGER NOT NULL DEFAULT 0,
+    phase TEXT,
     verification_status TEXT,
     verification_notes TEXT,
     requirement_ids_json TEXT DEFAULT '[]',
@@ -142,6 +143,19 @@ CREATE TABLE IF NOT EXISTS checkpoints (
     resolved_at REAL,
     created_at REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS user_identities (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    provider_user_id TEXT NOT NULL,
+    provider_email TEXT,
+    created_at REAL NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_identities_provider_uid
+    ON user_identities(provider, provider_user_id);
+CREATE INDEX IF NOT EXISTS idx_identities_user ON user_identities(user_id);
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_checkpoints_project ON checkpoints(project_id);

@@ -15,6 +15,13 @@ export interface User {
   email: string
   display_name: string
   role: string
+  has_password?: boolean
+  linked_providers?: string[]
+}
+
+export interface OIDCProvider {
+  name: string
+  display_name: string
 }
 
 export interface LoginResponse {
@@ -134,4 +141,66 @@ export async function apiGetMe(): Promise<User> {
 
 export function logout(): void {
   clearTokens()
+}
+
+// ---------------------------------------------------------------------------
+// OIDC
+// ---------------------------------------------------------------------------
+
+export async function fetchOIDCProviders(): Promise<OIDCProvider[]> {
+  try {
+    const resp = await fetch(`${BASE}/oidc/providers`)
+    if (!resp.ok) return []
+    return resp.json()
+  } catch {
+    return []
+  }
+}
+
+export async function startOIDCLogin(provider: string): Promise<void> {
+  const redirectUri = `${window.location.origin}/auth/oidc/callback`
+  const resp = await fetch(
+    `${BASE}/oidc/${provider}/login?redirect_uri=${encodeURIComponent(redirectUri)}`
+  )
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: 'OIDC error' }))
+    throw new Error(err.detail || 'Failed to start OIDC login')
+  }
+  const data = await resp.json()
+  sessionStorage.setItem('oidc_state_token', data.state_token)
+  sessionStorage.setItem('oidc_provider', provider)
+  window.location.href = data.authorization_url
+}
+
+export async function completeOIDCLogin(
+  provider: string,
+  code: string,
+  state: string,
+): Promise<LoginResponse> {
+  const stateToken = sessionStorage.getItem('oidc_state_token')
+  if (!stateToken) throw new Error('Missing state token')
+
+  const redirectUri = `${window.location.origin}/auth/oidc/callback`
+  const resp = await fetch(`${BASE}/oidc/${provider}/callback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      code,
+      state,
+      state_token: stateToken,
+      redirect_uri: redirectUri,
+    }),
+  })
+
+  sessionStorage.removeItem('oidc_state_token')
+  sessionStorage.removeItem('oidc_provider')
+
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: 'OIDC callback failed' }))
+    throw new Error(err.detail || 'OIDC authentication failed')
+  }
+
+  const data: LoginResponse = await resp.json()
+  setTokens(data.access_token, data.refresh_token)
+  return data
 }

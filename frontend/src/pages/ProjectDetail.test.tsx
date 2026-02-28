@@ -154,7 +154,7 @@ describe('ProjectDetail', () => {
     mockFetchCheckpoints.mockReturnValue(new Promise(() => {}))
     mockUseSSE.mockReturnValue({ events: [], connected: false })
     renderProjectDetail()
-    expect(screen.getByText('Loading...')).toBeInTheDocument()
+    expect(screen.getByText('Loading project...')).toBeInTheDocument()
   })
 
   it('shows error when fetch fails', async () => {

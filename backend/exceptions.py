@@ -28,3 +28,11 @@ class PlanParseError(OrchestrationError):
 
 class CycleDetectedError(OrchestrationError):
     """The task dependency graph contains a cycle."""
+
+
+class OIDCError(OrchestrationError):
+    """Error during OIDC authentication flow."""
+
+
+class AccountLinkError(OrchestrationError):
+    """Error linking or unlinking an OAuth provider."""

@@ -11,6 +11,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Register from './pages/Register'
+import OIDCCallback from './pages/OIDCCallback'
 import Dashboard from './pages/Dashboard'
 import ProjectDetail from './pages/ProjectDetail'
 import TaskDetail from './pages/TaskDetail'
@@ -29,6 +30,7 @@ export default function App() {
             {/* Public routes */}
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/auth/oidc/callback" element={<OIDCCallback />} />
 
             {/* Protected routes */}
             <Route element={<AuthGuard />}>

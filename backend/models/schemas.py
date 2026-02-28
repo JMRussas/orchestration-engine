@@ -9,6 +9,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from backend.models.enums import (
     ModelTier,
+    PlanningRigor,
     PlanStatus,
     ProjectStatus,
     ResourceStatus,
@@ -25,12 +26,14 @@ class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     requirements: str = Field(..., min_length=1, max_length=50_000)
     config: dict = Field(default_factory=dict)
+    planning_rigor: PlanningRigor = PlanningRigor.L2
 
 
 class ProjectUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     requirements: str | None = Field(default=None, min_length=1, max_length=50_000)
     config: dict | None = None
+    planning_rigor: PlanningRigor | None = None
 
 
 class ProjectOut(BaseModel):
@@ -42,6 +45,7 @@ class ProjectOut(BaseModel):
     updated_at: float
     completed_at: float | None = None
     config: dict = Field(default_factory=dict)
+    planning_rigor: str = "L2"
     task_summary: dict | None = None  # {total, completed, running, failed}
 
 
@@ -78,6 +82,7 @@ class TaskOut(BaseModel):
     model_tier: ModelTier
     model_used: str | None = None
     wave: int = 0
+    phase: str | None = None
     tools: list[str] = Field(default_factory=list)
     verification_status: str | None = None
     verification_notes: str | None = None
@@ -197,6 +202,8 @@ class UserOut(BaseModel):
     email: str
     display_name: str
     role: str
+    has_password: bool = True
+    linked_providers: list[str] = Field(default_factory=list)
 
 
 class LoginResponse(BaseModel):
@@ -210,6 +217,39 @@ class RefreshResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+
+
+# ---------------------------------------------------------------------------
+# OIDC
+# ---------------------------------------------------------------------------
+
+class OIDCCallbackRequest(BaseModel):
+    """OIDC authorization code callback."""
+    code: str = Field(..., min_length=1)
+    state: str = Field(..., min_length=1)
+    state_token: str = Field(..., min_length=1)
+    redirect_uri: str = Field(..., min_length=1)
+
+
+class OIDCLinkRequest(BaseModel):
+    """Link an OIDC provider to an existing account."""
+    code: str = Field(..., min_length=1)
+    state: str = Field(..., min_length=1)
+    state_token: str = Field(..., min_length=1)
+    redirect_uri: str = Field(..., min_length=1)
+
+
+class OIDCProviderInfo(BaseModel):
+    """Public info about a configured OIDC provider."""
+    name: str
+    display_name: str
+
+
+class OIDCIdentityOut(BaseModel):
+    """A linked OIDC identity for a user."""
+    provider: str
+    provider_email: str | None = None
+    created_at: float
 
 
 # ---------------------------------------------------------------------------

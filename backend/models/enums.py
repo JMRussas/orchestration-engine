@@ -66,7 +66,14 @@ class TaskSortField(str, Enum):
     STATUS = "status"
 
 
+class PlanningRigor(str, Enum):
+    L1 = "L1"   # Quick — flat task list
+    L2 = "L2"   # Standard — phases + open questions
+    L3 = "L3"   # Thorough — phases + risk + test strategy
+
+
 class ResourceStatus(str, Enum):
     ONLINE = "online"
     OFFLINE = "offline"
     DEGRADED = "degraded"    # Reachable but missing models
+    CHECKING = "checking"    # Initial state before first health check

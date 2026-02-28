@@ -100,18 +100,20 @@ class AuthService:
     # Registration
     # ------------------------------------------------------------------
 
-    async def register(self, email: str, password: str, display_name: str = "") -> dict:
+    async def register(self, email: str, password: str | None = None, display_name: str = "") -> dict:
         """Register a new user. First user becomes admin.
 
         Uses BEGIN IMMEDIATE transaction to prevent race conditions where
         two concurrent first-registrations both become admin.
+
+        Password can be None for OAuth-only users.
         """
         if not AUTH_ALLOW_REGISTRATION:
             raise PermissionError("Registration is disabled")
 
         user_id = str(uuid.uuid4())
         now = time.time()
-        password_hash = self.hash_password(password)
+        password_hash = self.hash_password(password) if password else None
         display = display_name or email.split("@")[0]
 
         async with self._db.transaction() as conn:
@@ -156,6 +158,9 @@ class AuthService:
             # is indistinguishable from a real user with wrong password
             self.verify_password(password, _DUMMY_HASH)
             raise ValueError("Invalid email or password")
+
+        if not user["password_hash"]:
+            raise ValueError("This account uses OAuth login. Please sign in with your linked provider.")
 
         if not self.verify_password(password, user["password_hash"]):
             raise ValueError("Invalid email or password")
@@ -221,10 +226,26 @@ class AuthService:
     async def get_user(self, user_id: str) -> dict | None:
         """Fetch user by ID. Returns dict or None."""
         row = await self._db.fetchone(
-            "SELECT id, email, display_name, role, is_active, created_at, last_login_at "
+            "SELECT id, email, display_name, role, is_active, created_at, last_login_at, "
+            "password_hash IS NOT NULL as has_password "
             "FROM users WHERE id = ?",
             (user_id,),
         )
         if not row:
             return None
-        return dict(row)
+        user = dict(row)
+        # Fetch linked OIDC providers
+        identities = await self._db.fetchall(
+            "SELECT provider FROM user_identities WHERE user_id = ?",
+            (user_id,),
+        )
+        user["linked_providers"] = [r["provider"] for r in identities]
+        return user
+
+    async def set_password(self, user_id: str, new_password: str) -> None:
+        """Set or change a user's password."""
+        password_hash = self.hash_password(new_password)
+        await self._db.execute_write(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (password_hash, user_id),
+        )

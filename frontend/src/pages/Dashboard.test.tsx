@@ -46,6 +46,15 @@ beforeEach(() => {
 })
 
 describe('Dashboard', () => {
+  it('shows loading spinner initially', () => {
+    mockListProjects.mockReturnValue(new Promise(() => {}))
+    mockGetBudget.mockReturnValue(new Promise(() => {}))
+    mockListServices.mockReturnValue(new Promise(() => {}))
+    renderDashboard()
+    expect(screen.getByText('Loading projects...')).toBeInTheDocument()
+    expect(screen.queryByText(/No projects yet/)).not.toBeInTheDocument()
+  })
+
   it('shows no projects message when empty', async () => {
     setupDefaultMocks()
     renderDashboard()

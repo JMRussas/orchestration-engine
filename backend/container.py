@@ -11,6 +11,7 @@ from dependency_injector import containers, providers
 
 from backend.db.connection import Database
 from backend.services.auth import AuthService
+from backend.services.oidc import OIDCService
 from backend.services.budget import BudgetManager
 from backend.services.decomposer import DecomposerService
 from backend.services.executor import Executor
@@ -40,6 +41,7 @@ class Container(containers.DeclarativeContainer):
             "backend.routes.checkpoints",
             "backend.routes.admin",
             "backend.routes.rag",
+            "backend.routes.auth_oidc",
             "backend.middleware.auth",
         ]
     )
@@ -54,6 +56,7 @@ class Container(containers.DeclarativeContainer):
 
     # --- Services ---
     auth = providers.Singleton(AuthService, db=db)
+    oidc = providers.Singleton(OIDCService, db=db, auth=auth)
     budget = providers.Singleton(BudgetManager, db=db)
     progress = providers.Singleton(ProgressManager, db=db)
     resource_monitor = providers.Singleton(ResourceMonitor)
