@@ -15,6 +15,7 @@ from starlette.requests import Request
 
 from backend.config import AUTH_ALGORITHM, AUTH_SECRET_KEY
 from backend.container import Container
+from backend.rate_limit import limiter
 from backend.exceptions import AccountLinkError, NotFoundError, OIDCError
 from backend.middleware.auth import get_current_user
 from backend.models.schemas import (
@@ -82,8 +83,10 @@ async def list_providers(
 
 
 @router.get("/{provider}/login")
+@limiter.limit("5/minute")
 @inject
 async def oidc_login_redirect(
+    request: Request,
     provider: str,
     redirect_uri: str = Query(...),
     oidc: OIDCService = Depends(Provide[Container.oidc]),
@@ -102,6 +105,7 @@ async def oidc_login_redirect(
 
 
 @router.post("/{provider}/callback", response_model=LoginResponse)
+@limiter.limit("5/minute")
 @inject
 async def oidc_callback(
     request: Request,

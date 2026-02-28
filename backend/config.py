@@ -132,6 +132,7 @@ AUTH_REFRESH_TOKEN_EXPIRE_DAYS = cfg("auth.refresh_token_expire_days", 7)
 AUTH_ALLOW_REGISTRATION = cfg("auth.allow_registration", True)
 AUTH_SSE_TOKEN_EXPIRE_SECONDS = cfg("auth.sse_token_expire_seconds", 60)
 AUTH_OIDC_PROVIDERS: list[dict] = cfg("auth.oidc_providers", [])
+AUTH_OIDC_REDIRECT_URIS: list[str] = cfg("auth.oidc_redirect_uris", [])
 
 
 # ---------------------------------------------------------------------------
@@ -170,15 +171,35 @@ def validate_config():
         if not isinstance(val, (int, float)) or val <= 0:
             raise ConfigError(f"{label} must be > 0, got {val}")
 
-    # Warning: OIDC provider config issues (non-fatal — OIDC is optional)
+    # Fatal: OIDC providers must have all required fields if configured
     for i, prov in enumerate(AUTH_OIDC_PROVIDERS):
         name = prov.get("name", f"<index {i}>")
         if not prov.get("name"):
-            _logger.warning("OIDC provider at index %d has no 'name'", i)
+            raise ConfigError(f"OIDC provider at index {i} is missing required 'name' field")
         if not prov.get("issuer"):
-            _logger.warning("OIDC provider '%s' has no 'issuer'", name)
-        if not prov.get("client_id") or not prov.get("client_secret"):
-            _logger.warning("OIDC provider '%s' missing client_id or client_secret", name)
+            raise ConfigError(f"OIDC provider '{name}' is missing required 'issuer' field")
+        if not prov.get("client_id"):
+            raise ConfigError(f"OIDC provider '{name}' is missing required 'client_id' field")
+        if not prov.get("client_secret"):
+            raise ConfigError(f"OIDC provider '{name}' is missing required 'client_secret' field")
+
+    # Warning: OIDC redirect URIs not configured when providers exist
+    if AUTH_OIDC_PROVIDERS and not AUTH_OIDC_REDIRECT_URIS:
+        _logger.warning(
+            "OIDC providers configured but auth.oidc_redirect_uris is empty — "
+            "redirect URI validation is disabled"
+        )
+
+    # Fatal: CORS origins must be valid URLs
+    for origin in CORS_ORIGINS:
+        if not isinstance(origin, str):
+            raise ConfigError(f"CORS origin must be a string, got {type(origin).__name__}")
+        if origin == "*":
+            _logger.warning("CORS origin '*' allows all origins — not recommended for production")
+        elif not origin.startswith(("http://", "https://")):
+            raise ConfigError(
+                f"CORS origin must start with http:// or https://, got '{origin}'"
+            )
 
     # Warning: Anthropic API key not set (Ollama-only usage is valid)
     if not ANTHROPIC_API_KEY:

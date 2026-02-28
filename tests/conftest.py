@@ -135,6 +135,10 @@ async def app_client(tmp_db):
     container.http_client.override(providers.Object(mock_http))
     init_patcher.start()
 
+    # Reset rate limiter storage so tests don't hit limits from prior tests
+    from backend.rate_limit import limiter as _limiter
+    _limiter.reset()
+
     try:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:

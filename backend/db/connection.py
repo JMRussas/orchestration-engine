@@ -123,8 +123,8 @@ CREATE TABLE IF NOT EXISTS budget_periods (
 
 CREATE TABLE IF NOT EXISTS task_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    project_id TEXT NOT NULL,
-    task_id TEXT,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
     event_type TEXT NOT NULL,
     message TEXT,
     data_json TEXT,
@@ -170,6 +170,13 @@ CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage_log(timestamp);
 CREATE INDEX IF NOT EXISTS idx_budget_type ON budget_periods(period_type);
 CREATE INDEX IF NOT EXISTS idx_events_project ON task_events(project_id);
 CREATE INDEX IF NOT EXISTS idx_events_task ON task_events(task_id);
+
+-- Composite indexes for common query patterns
+CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status);
+CREATE INDEX IF NOT EXISTS idx_tasks_project_wave ON tasks(project_id, wave);
+CREATE INDEX IF NOT EXISTS idx_events_project_task ON task_events(project_id, task_id);
+CREATE INDEX IF NOT EXISTS idx_deps_task_id ON task_deps(task_id);
+CREATE INDEX IF NOT EXISTS idx_usage_project_timestamp ON usage_log(project_id, timestamp);
 """
 
 

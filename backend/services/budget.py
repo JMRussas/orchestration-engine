@@ -38,6 +38,7 @@ class BudgetManager:
         self._lock = asyncio.Lock()
         self._reserved_daily: float = 0.0
         self._reserved_monthly: float = 0.0
+        self._reserved_per_project: dict[str, float] = {}
         self._last_daily_key: str = ""
         self._last_monthly_key: str = ""
 
@@ -153,6 +154,7 @@ class BudgetManager:
             monthly_key = _month_key()
             if daily_key != self._last_daily_key:
                 self._reserved_daily = 0.0
+                self._reserved_per_project.clear()
                 self._last_daily_key = daily_key
             if monthly_key != self._last_monthly_key:
                 self._reserved_monthly = 0.0
@@ -183,7 +185,11 @@ class BudgetManager:
             self._reserved_monthly = max(0.0, self._reserved_monthly - estimated_cost)
 
     async def can_spend_project(self, project_id: str, estimated_cost_usd: float) -> bool:
-        """Check if a project has budget remaining."""
+        """Check if a project has budget remaining.
+
+        Note: this does NOT reserve the amount. For concurrent task dispatch,
+        use reserve_spend_project() instead to prevent TOCTOU races.
+        """
         if estimated_cost_usd <= 0:
             return True
 
@@ -194,6 +200,39 @@ class BudgetManager:
         project_spent = row["total"] if row else 0.0
 
         return project_spent + estimated_cost_usd <= BUDGET_PER_PROJECT
+
+    async def reserve_spend_project(self, project_id: str, estimated_cost: float) -> bool:
+        """Atomically check per-project budget and reserve estimated_cost.
+
+        Returns True if the reservation succeeded (project budget allows it),
+        False if it would exceed the per-project limit. Must be called under
+        the same _lock context as reserve_spend() — caller should hold the
+        global reservation first.
+        """
+        if estimated_cost <= 0:
+            return True
+
+        async with self._lock:
+            row = await self._db.fetchone(
+                "SELECT COALESCE(SUM(cost_usd), 0) as total FROM usage_log WHERE project_id = ?",
+                (project_id,),
+            )
+            project_spent = row["total"] if row else 0.0
+            reserved = self._reserved_per_project.get(project_id, 0.0)
+
+            if project_spent + reserved + estimated_cost > BUDGET_PER_PROJECT:
+                return False
+
+            self._reserved_per_project[project_id] = reserved + estimated_cost
+            return True
+
+    async def release_reservation_project(self, project_id: str, estimated_cost: float) -> None:
+        """Release a previously held per-project reservation."""
+        if estimated_cost <= 0:
+            return
+        async with self._lock:
+            current = self._reserved_per_project.get(project_id, 0.0)
+            self._reserved_per_project[project_id] = max(0.0, current - estimated_cost)
 
     async def is_warning(self) -> bool:
         """Check if we're at or above the warning threshold."""

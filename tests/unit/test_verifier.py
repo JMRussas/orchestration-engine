@@ -107,7 +107,7 @@ class TestVerifyOutput:
             task_id="task1",
         )
 
-        assert result["result"] == VerificationResult.PASSED
+        assert result["result"] == VerificationResult.HUMAN_NEEDED
 
     async def test_unknown_verdict_defaults_to_passed(self):
         client = _make_mock_client("some_unknown_verdict", "whatever")

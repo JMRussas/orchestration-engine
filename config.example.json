@@ -85,6 +85,10 @@
     "refresh_token_expire_days": 7,
     "sse_token_expire_seconds": 60,
     "allow_registration": true,
-    "oidc_providers": []
+    "oidc_providers": [],
+    "oidc_redirect_uris": [
+      "http://localhost:5173/auth/oidc/callback",
+      "http://localhost:5200/auth/oidc/callback"
+    ]
   }
 }

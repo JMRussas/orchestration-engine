@@ -46,10 +46,10 @@ async def run_ollama_task(*, task_row, http_client, budget) -> dict:
         resp = await client.post(
             f"{host_url}/api/generate", json=body, timeout=OLLAMA_GENERATE_TIMEOUT
         )
+        resp.raise_for_status()
     finally:
         if not http_client:
             await client.aclose()
-    resp.raise_for_status()
     data = resp.json()
 
     output = data.get("response", "")

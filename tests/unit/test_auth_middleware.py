@@ -152,3 +152,16 @@ class TestGetUserFromSseToken:
             )
         assert exc_info.value.status_code == 401
         assert "Invalid token type" in exc_info.value.detail
+
+    async def test_access_token_rejected_for_sse(self, tmp_db):
+        """Access tokens must not be accepted for SSE endpoints."""
+        auth = AuthService(db=tmp_db)
+        user, user_id = await _make_user(auth, email="sse_access@example.com")
+
+        access_token = AuthService.create_access_token(user_id, user["role"])
+        with pytest.raises(HTTPException) as exc_info:
+            await get_user_from_sse_token(
+                project_id="proj_001", token=access_token, auth=auth
+            )
+        assert exc_info.value.status_code == 401
+        assert "SSE token required" in exc_info.value.detail

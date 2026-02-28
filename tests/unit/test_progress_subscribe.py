@@ -7,10 +7,38 @@
 
 import asyncio
 import json
+import time
 
 import pytest
 
 from backend.services.progress import ProgressManager
+
+
+async def _create_project(db, project_id):
+    """Helper: insert a project + plan row so FK constraints pass."""
+    now = time.time()
+    await db.execute_write(
+        "INSERT OR IGNORE INTO projects (id, name, requirements, status, created_at, updated_at) "
+        "VALUES (?, 'Test', 'test', 'draft', ?, ?)",
+        (project_id, now, now),
+    )
+    await db.execute_write(
+        "INSERT OR IGNORE INTO plans (id, project_id, version, model_used, plan_json, status, created_at) "
+        "VALUES (?, ?, 1, 'test', '{}', 'approved', ?)",
+        (f"plan_{project_id}", project_id, now),
+    )
+
+
+async def _create_task(db, task_id, project_id):
+    """Helper: insert a task row so FK constraints pass."""
+    now = time.time()
+    await db.execute_write(
+        "INSERT OR IGNORE INTO tasks (id, project_id, plan_id, title, description, "
+        "task_type, priority, status, model_tier, wave, retry_count, max_retries, "
+        "created_at, updated_at) "
+        "VALUES (?, ?, ?, 'Test', 'test', 'code', 0, 'pending', 'haiku', 0, 0, 5, ?, ?)",
+        (task_id, project_id, f"plan_{project_id}", now, now),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -21,6 +49,8 @@ class TestProgressSubscribe:
 
     async def test_yields_event_after_push(self, tmp_db):
         """subscribe() yields SSE-formatted event after push_event."""
+        await _create_project(tmp_db, "proj_001")
+        await _create_task(tmp_db, "t1", "proj_001")
         pm = ProgressManager(db=tmp_db)
 
         gen = pm.subscribe("proj_001")
@@ -70,6 +100,7 @@ class TestProgressSubscribe:
 
     async def test_terminal_event_breaks_generator(self, tmp_db):
         """subscribe() stops after project_complete event."""
+        await _create_project(tmp_db, "proj_003")
         pm = ProgressManager(db=tmp_db)
 
         gen = pm.subscribe("proj_003")
@@ -109,6 +140,7 @@ class TestProgressSubscribe:
 
     async def test_concurrent_subscribers(self, tmp_db):
         """Two subscribers on the same project both receive events."""
+        await _create_project(tmp_db, "proj_005")
         pm = ProgressManager(db=tmp_db)
 
         gen1 = pm.subscribe("proj_005")

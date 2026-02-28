@@ -50,7 +50,11 @@ def run_migrations(db_path: str | Path) -> None:
                 logger.info("Fresh database, running all migrations")
 
         # Apply any pending migrations
-        command.upgrade(alembic_cfg, "head")
-        logger.info("Migrations complete (head)")
+        try:
+            command.upgrade(alembic_cfg, "head")
+            logger.info("Migrations complete (head)")
+        except Exception as e:
+            logger.critical("Migration failed: %s", e, exc_info=True)
+            raise RuntimeError(f"Database migration failed: {e}") from e
     finally:
         engine.dispose()
