@@ -77,6 +77,15 @@
     "claude-sonnet-4-6": { "input_per_mtok": 3.0, "output_per_mtok": 15.0 },
     "claude-opus-4-6": { "input_per_mtok": 15.0, "output_per_mtok": 75.0 }
   },
+  "git": {
+    "enabled": true,
+    "commit_author": "Orchestration Engine <orchestration@local>",
+    "branch_prefix": "orch",
+    "non_code_output_path": ".orchestration",
+    "auto_pr": true,
+    "pr_remote": "origin",
+    "command_timeout": 30
+  },
   "resource_check_interval_sec": 30,
   "auth": {
     "secret_key": "CHANGE-ME-generate-a-random-64-char-string-here",

@@ -27,6 +27,8 @@ class ProjectCreate(BaseModel):
     requirements: str = Field(..., min_length=1, max_length=50_000)
     config: dict = Field(default_factory=dict)
     planning_rigor: PlanningRigor = PlanningRigor.L2
+    repo_path: str | None = None
+    git_base_branch: str | None = None
 
 
 class ProjectUpdate(BaseModel):
@@ -34,6 +36,8 @@ class ProjectUpdate(BaseModel):
     requirements: str | None = Field(default=None, min_length=1, max_length=50_000)
     config: dict | None = None
     planning_rigor: PlanningRigor | None = None
+    repo_path: str | None = None
+    git_base_branch: str | None = None
 
 
 class ProjectOut(BaseModel):
@@ -47,6 +51,10 @@ class ProjectOut(BaseModel):
     config: dict = Field(default_factory=dict)
     planning_rigor: str = "L2"
     task_summary: dict | None = None  # {total, completed, running, failed}
+    repo_path: str | None = None
+    git_base_branch: str | None = None
+    git_project_branch: str | None = None
+    git_state: dict = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +106,8 @@ class TaskOut(BaseModel):
     completed_at: float | None = None
     created_at: float = 0.0
     updated_at: float = 0.0
+    git_branch: str | None = None
+    git_commit_sha: str | None = None
 
 
 class TaskUpdate(BaseModel):
