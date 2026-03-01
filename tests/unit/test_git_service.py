@@ -335,7 +335,7 @@ class TestBackupAndDiscard:
     async def test_backup_dirty_state(self, git_repo, git_service):
         original = await git_service.get_current_branch(git_repo)
         (git_repo / "dirty.txt").write_text("dirty")
-        sha = await git_service.backup_dirty_state(git_repo, "backup/test")
+        await git_service.backup_dirty_state(git_repo, "backup/test")
 
         # Should be back on original branch
         current = await git_service.get_current_branch(git_repo)
