@@ -1,22 +1,22 @@
-#  Orchestration Engine - Migration 010: Add Git Columns
+#  Orchestration Engine - Migration 011: Add Git Columns
 #
 #  Adds git integration columns to projects and tasks tables.
 #
-#  Depends on: 009_task_events_fk_and_indexes
+#  Depends on: 010 (add_usage_task_index)
 #  Used by:    Alembic migration chain
 
 """Add git integration columns to projects and tasks
 
-Revision ID: 010_add_git_columns
-Revises: 009_task_events_fk_and_indexes
+Revision ID: 011
+Revises: 010
 Create Date: 2026-02-28
 """
 from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = "010_add_git_columns"
-down_revision = "009_task_events_fk_and_indexes"
+revision = "011"
+down_revision = "010"
 branch_labels = None
 depends_on = None
 
