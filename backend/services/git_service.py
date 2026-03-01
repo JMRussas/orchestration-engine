@@ -298,9 +298,10 @@ class GitService:
         self, cwd: str | Path, count: int = 10,
     ) -> list[dict]:
         """Get recent commit log as list of dicts."""
+        sep = "\x1f"  # ASCII unit separator — unlikely in commit metadata
         output = await asyncio.to_thread(
             self._run_git_sync,
-            "log", f"-{count}", "--format=%H|%an|%ae|%s|%aI", "--no-color",
+            "log", f"-{count}", f"--format=%H{sep}%an{sep}%ae{sep}%s{sep}%aI", "--no-color",
             cwd=cwd,
         )
         if not output:
@@ -308,7 +309,7 @@ class GitService:
 
         entries = []
         for line in output.split("\n"):
-            parts = line.split("|", 4)
+            parts = line.split(sep, 4)
             if len(parts) == 5:
                 entries.append({
                     "sha": parts[0],
@@ -370,7 +371,11 @@ class GitService:
     async def backup_dirty_state(
         self, cwd: str | Path, backup_branch: str,
     ) -> str:
-        """Commit all dirty state to a backup branch. Returns the backup SHA."""
+        """Commit all dirty state to a backup branch. Returns the backup SHA.
+
+        After this call, the original branch is clean — all dirty changes
+        have been committed to the backup branch.
+        """
         original_branch = await self.get_current_branch(cwd)
 
         # Create and checkout backup branch
@@ -452,6 +457,9 @@ class GitService:
             else:
                 logger.warning("gh pr create failed: %s", result.stderr.strip())
                 return None
+        except subprocess.TimeoutExpired:
+            logger.warning("gh pr create timed out after %ss", GIT_COMMAND_TIMEOUT)
+            return None
         except (FileNotFoundError, OSError):
             logger.warning("gh CLI not found — PR creation unavailable")
             return None
