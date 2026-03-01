@@ -178,10 +178,13 @@ class GitService:
             return {"success": True, "merge_type": "merge", "conflict_files": []}
 
         # Merge conflict — get conflicting files, then abort
+        # Unmerged status codes: UU (both modified), AA (both added),
+        # DD (both deleted), AU/UA (add vs modify), DU/UD (delete vs modify)
+        _UNMERGED = {"DD", "AU", "UA", "UU", "AA", "DU", "UD"}
         status = await self.get_status(cwd)
         conflict_files = [
             line[3:] for line in status.split("\n")
-            if line.startswith("UU ") or line.startswith("AA ")
+            if len(line) >= 3 and line[:2] in _UNMERGED
         ]
         await asyncio.to_thread(
             self._run_git_ok_sync, "merge", "--abort", cwd=cwd,
