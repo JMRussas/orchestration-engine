@@ -34,6 +34,7 @@ from backend.logging_config import set_request_id
 from backend.middleware.auth import get_current_user
 from backend.rate_limit import limiter
 from backend.routes.admin import router as admin_router
+from backend.routes.analytics import router as analytics_router
 from backend.routes.auth import router as auth_router
 from backend.routes.auth_oidc import router as auth_oidc_router
 from backend.routes.checkpoints import router as checkpoints_router
@@ -192,6 +193,7 @@ app.include_router(tasks_router, prefix="/api", dependencies=_auth_dep)
 app.include_router(usage_router, prefix="/api", dependencies=_auth_dep)
 app.include_router(checkpoints_router, prefix="/api", dependencies=_auth_dep)
 app.include_router(admin_router, prefix="/api", dependencies=_auth_dep)
+app.include_router(analytics_router, prefix="/api", dependencies=_auth_dep)
 app.include_router(rag_router, prefix="/api", dependencies=_auth_dep)
 
 # Events route uses query-param token auth (EventSource can't send headers)
