@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Query
 from backend.container import Container
 from backend.db.connection import Database
 from backend.middleware.auth import require_admin
-from backend.models.enums import TaskStatus
+from backend.models.enums import TaskStatus, VerificationResult
 from backend.models.schemas import (
     AnalyticsCostBreakdown,
     AnalyticsEfficiency,
@@ -123,7 +123,7 @@ async def cost_breakdown(
         for r in trend_rows
     ]
 
-    total = sum(p.cost_usd for p in by_project)
+    total = sum(t.cost_usd for t in by_model_tier)
 
     return AnalyticsCostBreakdown(
         by_project=by_project,
@@ -276,13 +276,13 @@ async def efficiency(
     eff_rows = await db.fetchall(
         "SELECT t.model_tier, "
         "COALESCE(SUM(u.cost_usd), 0) as cost, "
-        "COUNT(DISTINCT CASE WHEN t.status = 'completed' THEN t.id END) as completed, "
-        "COUNT(DISTINCT CASE WHEN t.verification_status = 'passed' THEN t.id END) as passed "
+        "COUNT(DISTINCT CASE WHEN t.status = ? THEN t.id END) as completed, "
+        "COUNT(DISTINCT CASE WHEN t.verification_status = ? THEN t.id END) as passed "
         "FROM tasks t "
         "LEFT JOIN usage_log u ON u.task_id = t.id "
         f"WHERE t.status IN ({_TERMINAL_PLACEHOLDERS}) "
         "GROUP BY t.model_tier",
-        _TERMINAL_STATUSES,
+        (TaskStatus.COMPLETED.value, VerificationResult.PASSED.value, *_TERMINAL_STATUSES),
     )
     cost_efficiency = [
         CostEfficiencyItem(
