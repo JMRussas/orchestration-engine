@@ -134,6 +134,15 @@ AUTH_SSE_TOKEN_EXPIRE_SECONDS = cfg("auth.sse_token_expire_seconds", 60)
 AUTH_OIDC_PROVIDERS: list[dict] = cfg("auth.oidc_providers", [])
 AUTH_OIDC_REDIRECT_URIS: list[str] = cfg("auth.oidc_redirect_uris", [])
 
+# Git integration
+GIT_ENABLED = cfg("git.enabled", True)
+GIT_COMMIT_AUTHOR = cfg("git.commit_author", "Orchestration Engine <orchestration@local>")
+GIT_BRANCH_PREFIX = cfg("git.branch_prefix", "orch")
+GIT_NON_CODE_OUTPUT_PATH = cfg("git.non_code_output_path", ".orchestration")
+GIT_AUTO_PR = cfg("git.auto_pr", True)
+GIT_PR_REMOTE = cfg("git.pr_remote", "origin")
+GIT_COMMAND_TIMEOUT = cfg("git.command_timeout", 30)
+
 
 # ---------------------------------------------------------------------------
 # Startup validation
@@ -199,6 +208,19 @@ def validate_config():
         elif not origin.startswith(("http://", "https://")):
             raise ConfigError(
                 f"CORS origin must start with http:// or https://, got '{origin}'"
+            )
+
+    # Fatal: git command timeout must be positive
+    if GIT_ENABLED and (not isinstance(GIT_COMMAND_TIMEOUT, (int, float)) or GIT_COMMAND_TIMEOUT <= 0):
+        raise ConfigError(f"git.command_timeout must be > 0, got {GIT_COMMAND_TIMEOUT}")
+
+    # Warning: git binary not found
+    if GIT_ENABLED:
+        import shutil
+        if not shutil.which("git"):
+            _logger.warning(
+                "git.enabled is true but 'git' binary not found on PATH — "
+                "git operations will fail"
             )
 
     # Warning: Anthropic API key not set (Ollama-only usage is valid)

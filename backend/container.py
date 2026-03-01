@@ -15,6 +15,7 @@ from backend.services.oidc import OIDCService
 from backend.services.budget import BudgetManager
 from backend.services.decomposer import DecomposerService
 from backend.services.executor import Executor
+from backend.services.git_service import GitService
 from backend.services.planner import PlannerService
 from backend.services.progress import ProgressManager
 from backend.services.resource_monitor import ResourceMonitor
@@ -61,6 +62,9 @@ class Container(containers.DeclarativeContainer):
     budget = providers.Singleton(BudgetManager, db=db)
     progress = providers.Singleton(ProgressManager, db=db)
     resource_monitor = providers.Singleton(ResourceMonitor)
+
+    # --- Git ---
+    git_service = providers.Factory(GitService, db=db)
 
     # --- Planning & Decomposition ---
     planner = providers.Factory(PlannerService, db=db, budget=budget)
