@@ -45,11 +45,13 @@
   "rag": {
     "databases": {
       "noz": "../noz-rag/data/noz_rag.db",
-      "verse": "../verse-rag/data/verse_rag.db"
+      "verse": "../verse-rag/data/verse_rag.db",
+      "diagnostic": "../diagnostic-rag/data/rag.db"
     },
     "embed_dimensions": 768,
     "default_top_k": 8,
-    "max_top_k": 20
+    "max_top_k": 20,
+    "diagnostic_ingest_path": "../diagnostic-rag/data/ingest.jsonl"
   },
   "budget": {
     "daily_limit_usd": 5.00,
@@ -70,12 +72,27 @@
     "verification_max_tokens": 1024,
     "checkpoint_on_retry_exhausted": true,
     "shutdown_grace_seconds": 30,
-    "stale_task_threshold_seconds": 300
+    "stale_task_threshold_seconds": 300,
+    "diagnostic_rag_enabled": false,
+    "knowledge_extraction_enabled": true,
+    "knowledge_extraction_model": "claude-haiku-4-5-20251001",
+    "knowledge_extraction_max_tokens": 1024,
+    "knowledge_injection_max_chars": 3000,
+    "knowledge_min_output_length": 200
   },
   "model_pricing": {
     "claude-haiku-4-5-20251001": { "input_per_mtok": 1.0, "output_per_mtok": 5.0 },
     "claude-sonnet-4-6": { "input_per_mtok": 3.0, "output_per_mtok": 15.0 },
     "claude-opus-4-6": { "input_per_mtok": 15.0, "output_per_mtok": 75.0 }
+  },
+  "git": {
+    "enabled": true,
+    "commit_author": "Orchestration Engine <orchestration@local>",
+    "branch_prefix": "orch",
+    "non_code_output_path": ".orchestration",
+    "auto_pr": true,
+    "pr_remote": "origin",
+    "command_timeout": 30
   },
   "resource_check_interval_sec": 30,
   "auth": {
@@ -85,6 +102,9 @@
     "refresh_token_expire_days": 7,
     "sse_token_expire_seconds": 60,
     "allow_registration": true,
+    "_note_first_user": "The first registered user automatically becomes admin. If deploying publicly, set allow_registration to false after initial setup.",
+    "login_lockout_threshold": 5,
+    "login_lockout_window_seconds": 300,
     "oidc_providers": [],
     "oidc_redirect_uris": [
       "http://localhost:5173/auth/oidc/callback",

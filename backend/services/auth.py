@@ -1,7 +1,8 @@
 #  Orchestration Engine - Auth Service
 #
 #  Password hashing, JWT encode/decode, register/login, SSE tokens.
-#  First registered user becomes admin.
+#  First registered user becomes admin. Includes per-account brute-force
+#  login protection with configurable threshold and window.
 #
 #  Depends on: backend/db/connection.py, backend/config.py
 #  Used by:    container.py, routes/auth.py, routes/events.py, middleware/auth.py
@@ -18,6 +19,9 @@ from backend.config import (
     AUTH_ACCESS_TOKEN_EXPIRE_MINUTES,
     AUTH_ALGORITHM,
     AUTH_ALLOW_REGISTRATION,
+    AUTH_LOGIN_LOCKOUT_THRESHOLD,
+    AUTH_LOGIN_LOCKOUT_WINDOW_SEC,
+    AUTH_LOGIN_MAX_TRACKED,
     AUTH_REFRESH_TOKEN_EXPIRE_DAYS,
     AUTH_SECRET_KEY,
     AUTH_SSE_TOKEN_EXPIRE_SECONDS,
@@ -35,6 +39,8 @@ class AuthService:
 
     def __init__(self, db: Database):
         self._db = db
+        # Brute-force protection: {email: (fail_count, first_fail_timestamp)}
+        self._login_failures: dict[str, tuple[int, float]] = {}
 
     # ------------------------------------------------------------------
     # Password helpers
@@ -147,8 +153,65 @@ class AuthService:
     # Login
     # ------------------------------------------------------------------
 
+    def _evict_stale_failures(self) -> None:
+        """Remove stale lockout entries to cap memory usage."""
+        if len(self._login_failures) <= AUTH_LOGIN_MAX_TRACKED:
+            return
+        now = time.time()
+        cutoff = now - AUTH_LOGIN_LOCKOUT_WINDOW_SEC
+        # First pass: remove entries outside the window
+        self._login_failures = {
+            email: (count, ts)
+            for email, (count, ts) in self._login_failures.items()
+            if ts > cutoff
+        }
+        # Hard cap fallback: if still over limit (all entries within window),
+        # drop the oldest entries by timestamp
+        if len(self._login_failures) > AUTH_LOGIN_MAX_TRACKED:
+            sorted_entries = sorted(
+                self._login_failures.items(), key=lambda x: x[1][1]
+            )
+            keep = sorted_entries[len(sorted_entries) - AUTH_LOGIN_MAX_TRACKED:]
+            self._login_failures = dict(keep)
+
+    def _is_locked_out(self, email: str) -> bool:
+        """Check if an email is currently locked out."""
+        entry = self._login_failures.get(email)
+        if not entry:
+            return False
+        fail_count, first_fail_ts = entry
+        # Window expired — forget failures
+        if time.time() - first_fail_ts > AUTH_LOGIN_LOCKOUT_WINDOW_SEC:
+            del self._login_failures[email]
+            return False
+        return fail_count >= AUTH_LOGIN_LOCKOUT_THRESHOLD
+
+    def _record_failure(self, email: str) -> None:
+        """Record a failed login attempt."""
+        now = time.time()
+        entry = self._login_failures.get(email)
+        if entry:
+            fail_count, first_fail_ts = entry
+            if now - first_fail_ts > AUTH_LOGIN_LOCKOUT_WINDOW_SEC:
+                # Window expired, start fresh
+                self._login_failures[email] = (1, now)
+            else:
+                self._login_failures[email] = (fail_count + 1, first_fail_ts)
+        else:
+            self._login_failures[email] = (1, now)
+
     async def login(self, email: str, password: str) -> dict:
         """Authenticate user, return tokens."""
+        # Evict stale lockout entries if over memory cap
+        self._evict_stale_failures()
+
+        # Check lockout BEFORE doing anything else.
+        # If locked out, still run bcrypt for timing safety, then return
+        # the same error as a normal login failure (no email enumeration).
+        if self._is_locked_out(email):
+            self.verify_password(password, _DUMMY_HASH)
+            raise ValueError("Invalid email or password")
+
         user = await self._db.fetchone(
             "SELECT * FROM users WHERE email = ?", (email,)
         )
@@ -157,16 +220,21 @@ class AuthService:
             # Timing-safe: still run bcrypt against dummy hash so response time
             # is indistinguishable from a real user with wrong password
             self.verify_password(password, _DUMMY_HASH)
+            self._record_failure(email)
             raise ValueError("Invalid email or password")
 
         if not user["password_hash"]:
             raise ValueError("This account uses OAuth login. Please sign in with your linked provider.")
 
         if not self.verify_password(password, user["password_hash"]):
+            self._record_failure(email)
             raise ValueError("Invalid email or password")
 
         if not user["is_active"]:
             raise PermissionError("Account is disabled")
+
+        # Successful login — clear failure counter
+        self._login_failures.pop(email, None)
 
         # Update last login
         await self._db.execute_write(
