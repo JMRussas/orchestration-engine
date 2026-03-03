@@ -10,8 +10,6 @@ from unittest.mock import patch
 
 import pytest
 
-from backend.services.auth import AuthService
-
 
 class TestLoginLockout:
     """Tests for per-account brute-force login protection."""

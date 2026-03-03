@@ -6,8 +6,6 @@
 #  Depends on: backend/app.py (SecurityHeadersMiddleware)
 #  Used by:    CI
 
-import pytest
-
 
 class TestSecurityHeaders:
     """Verify security headers are present on API responses."""
