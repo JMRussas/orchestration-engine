@@ -77,6 +77,8 @@ async def _row_to_dict(row, db: Database, deps_list: list[str] | None = None) ->
         "completed_at": row["completed_at"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+        "git_branch": row["git_branch"],
+        "git_commit_sha": row["git_commit_sha"],
     }
 
 

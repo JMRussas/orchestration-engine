@@ -47,6 +47,7 @@ async def _row_to_project(
     For batch use, pass preloaded_summary to avoid per-project DB queries.
     """
     config = json.loads(row["config_json"]) if row["config_json"] else {}
+    git_state = json.loads(row["git_state_json"]) if row["git_state_json"] else {}
     data = {
         "id": row["id"],
         "name": row["name"],
@@ -57,6 +58,10 @@ async def _row_to_project(
         "completed_at": row["completed_at"],
         "config": config,
         "planning_rigor": config.get("planning_rigor", "L2"),
+        "repo_path": row["repo_path"],
+        "git_base_branch": row["git_base_branch"],
+        "git_project_branch": row["git_project_branch"],
+        "git_state": git_state,
     }
 
     if include_task_summary:
@@ -106,9 +111,12 @@ async def create_project(
     config["planning_rigor"] = body.planning_rigor.value
 
     await db.execute_write(
-        "INSERT INTO projects (id, name, requirements, status, config_json, owner_id, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (project_id, body.name, body.requirements, ProjectStatus.DRAFT, json.dumps(config), current_user["id"], now, now),
+        "INSERT INTO projects (id, name, requirements, status, config_json, owner_id, "
+        "repo_path, git_base_branch, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (project_id, body.name, body.requirements, ProjectStatus.DRAFT,
+         json.dumps(config), current_user["id"],
+         body.repo_path, body.git_base_branch, now, now),
     )
 
     row = await db.fetchone("SELECT * FROM projects WHERE id = ?", (project_id,))
@@ -207,6 +215,12 @@ async def update_project(
             merged_config["planning_rigor"] = body.planning_rigor.value
         updates.append("config_json = ?")
         params.append(json.dumps(merged_config))
+    if body.repo_path is not None:
+        updates.append("repo_path = ?")
+        params.append(body.repo_path)
+    if body.git_base_branch is not None:
+        updates.append("git_base_branch = ?")
+        params.append(body.git_base_branch)
 
     if not updates:
         raise HTTPException(400, "No fields to update")

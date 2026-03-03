@@ -27,6 +27,8 @@ class ProjectCreate(BaseModel):
     requirements: str = Field(..., min_length=1, max_length=50_000)
     config: dict = Field(default_factory=dict)
     planning_rigor: PlanningRigor = PlanningRigor.L2
+    repo_path: str | None = None
+    git_base_branch: str | None = None
 
 
 class ProjectUpdate(BaseModel):
@@ -34,6 +36,8 @@ class ProjectUpdate(BaseModel):
     requirements: str | None = Field(default=None, min_length=1, max_length=50_000)
     config: dict | None = None
     planning_rigor: PlanningRigor | None = None
+    repo_path: str | None = None
+    git_base_branch: str | None = None
 
 
 class ProjectOut(BaseModel):
@@ -47,6 +51,10 @@ class ProjectOut(BaseModel):
     config: dict = Field(default_factory=dict)
     planning_rigor: str = "L2"
     task_summary: dict | None = None  # {total, completed, running, failed}
+    repo_path: str | None = None
+    git_base_branch: str | None = None
+    git_project_branch: str | None = None
+    git_state: dict = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +106,8 @@ class TaskOut(BaseModel):
     completed_at: float | None = None
     created_at: float = 0.0
     updated_at: float = 0.0
+    git_branch: str | None = None
+    git_commit_sha: str | None = None
 
 
 class TaskUpdate(BaseModel):
@@ -282,6 +292,92 @@ class AdminStats(BaseModel):
     total_spend_usd: float
     spend_by_model: dict[str, float]
     task_completion_rate: float
+
+
+# ---------------------------------------------------------------------------
+# Analytics
+# ---------------------------------------------------------------------------
+
+class CostByProject(BaseModel):
+    project_id: str
+    project_name: str
+    cost_usd: float
+    task_count: int
+
+
+class CostByModelTier(BaseModel):
+    model_tier: str
+    cost_usd: float
+    task_count: int
+    avg_cost_per_task: float
+
+
+class DailyCostTrend(BaseModel):
+    date: str
+    cost_usd: float
+    api_calls: int
+
+
+class AnalyticsCostBreakdown(BaseModel):
+    by_project: list[CostByProject]
+    by_model_tier: list[CostByModelTier]
+    daily_trend: list[DailyCostTrend]
+    total_cost_usd: float
+
+
+class TaskOutcomeByTier(BaseModel):
+    model_tier: str
+    total: int
+    completed: int
+    failed: int
+    needs_review: int
+    success_rate: float
+
+
+class VerificationByTier(BaseModel):
+    model_tier: str
+    total_verified: int
+    passed: int
+    gaps_found: int
+    human_needed: int
+    pass_rate: float
+
+
+class AnalyticsTaskOutcomes(BaseModel):
+    by_tier: list[TaskOutcomeByTier]
+    verification_by_tier: list[VerificationByTier]
+
+
+class RetryByTier(BaseModel):
+    model_tier: str
+    total_tasks: int
+    tasks_with_retries: int
+    total_retries: int
+    retry_rate: float
+
+
+class WaveThroughput(BaseModel):
+    project_id: str
+    project_name: str
+    wave: int
+    task_count: int
+    avg_duration_seconds: float | None = None
+
+
+class CostEfficiencyItem(BaseModel):
+    model_tier: str
+    cost_usd: float
+    tasks_completed: int
+    verification_pass_count: int
+    cost_per_pass: float | None = None
+
+
+class AnalyticsEfficiency(BaseModel):
+    retries_by_tier: list[RetryByTier]
+    checkpoint_count: int
+    unresolved_checkpoint_count: int
+    wave_throughput: list[WaveThroughput]
+    cost_efficiency: list[CostEfficiencyItem]
 
 
 # ---------------------------------------------------------------------------

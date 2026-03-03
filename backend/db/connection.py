@@ -42,7 +42,12 @@ CREATE TABLE IF NOT EXISTS projects (
     updated_at REAL NOT NULL,
     completed_at REAL,
     config_json TEXT DEFAULT '{}',
-    owner_id TEXT REFERENCES users(id) ON DELETE SET NULL
+    owner_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    repo_path TEXT,
+    git_base_branch TEXT,
+    git_project_branch TEXT,
+    git_worktree_path TEXT,
+    git_state_json TEXT DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS plans (
@@ -89,7 +94,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     started_at REAL,
     completed_at REAL,
     created_at REAL NOT NULL,
-    updated_at REAL NOT NULL
+    updated_at REAL NOT NULL,
+    git_branch TEXT,
+    git_commit_sha TEXT
 );
 
 CREATE TABLE IF NOT EXISTS task_deps (
@@ -165,6 +172,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority);
 CREATE INDEX IF NOT EXISTS idx_tasks_wave ON tasks(wave);
 CREATE INDEX IF NOT EXISTS idx_deps_depends ON task_deps(depends_on);
 CREATE INDEX IF NOT EXISTS idx_usage_project ON usage_log(project_id);
+CREATE INDEX IF NOT EXISTS idx_usage_task ON usage_log(task_id);
 CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage_log(timestamp);
 CREATE INDEX IF NOT EXISTS idx_budget_type ON budget_periods(period_type);
 CREATE INDEX IF NOT EXISTS idx_events_project ON task_events(project_id);

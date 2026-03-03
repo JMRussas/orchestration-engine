@@ -38,7 +38,7 @@ docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 | `backend/rate_limit.py` | Shared slowapi limiter instance |
 | `backend/config.py` | Config loader, constants, `validate_config()` startup checks |
 | `backend/container.py` | dependency-injector `DeclarativeContainer` |
-| `backend/exceptions.py` | Typed exception hierarchy (`NotFoundError`, `BudgetExhaustedError`, etc.) |
+| `backend/exceptions.py` | Typed exception hierarchy (`NotFoundError`, `BudgetExhaustedError`, `GitError`, etc.) |
 | `backend/logging_config.py` | Structured logging setup |
 | `backend/db/connection.py` | Async SQLite (aiosqlite, WAL mode) |
 | `backend/db/migrate.py` | Programmatic Alembic migration runner |
@@ -49,6 +49,7 @@ docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 | `backend/routes/auth.py` | Register, login, refresh, me endpoints |
 | `backend/routes/checkpoints.py` | Checkpoint list, get, resolve endpoints |
 | `backend/routes/admin.py` | Admin-only user management, system stats |
+| `backend/routes/analytics.py` | Admin-only analytics (cost, outcomes, efficiency) |
 | `backend/routes/rag.py` | Read-only RAG database inspection endpoints |
 | `backend/routes/` | REST endpoints (projects, tasks, usage, services, events) |
 | `backend/services/auth.py` | Password hashing, JWT encode/decode, SSE tokens, user management |
@@ -61,6 +62,7 @@ docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 | `backend/services/verifier.py` | Post-completion output verification via Haiku |
 | `backend/services/budget.py` | Spending tracking, limit enforcement |
 | `backend/services/model_router.py` | Model tier selection, cost calculation |
+| `backend/services/git_service.py` | Stateless git operations via subprocess + asyncio.to_thread |
 | `backend/services/resource_monitor.py` | Health checks (Ollama, ComfyUI, Claude) |
 | `backend/services/progress.py` | SSE broadcast, event persistence |
 | `backend/tools/registry.py` | Injectable `ToolRegistry` class |
@@ -98,7 +100,8 @@ docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 - **Verification**: optional post-completion check via Haiku (PASSED/GAPS_FOUND/HUMAN_NEEDED outcomes)
 - **Checkpoints**: retry-exhausted tasks create structured checkpoints for human resolution
 - **Traceability**: requirements numbered [R1], [R2], mapped to tasks; coverage endpoint shows gaps
-- **Tests**: Backend: pytest-asyncio (auto mode), 443 tests, 86% coverage (CI threshold 80%). Frontend: vitest + @testing-library/react, 135 tests. Load tests: 7 (excluded from CI via `slow` marker)
+- **Git integration**: optional per-project (`repo_path` nullable). `GitService` wraps subprocess via `asyncio.to_thread()`. Config in `git.*` section. Phase 1 (foundation) complete; execution wiring (Phase 2+) pending.
+- **Tests**: Backend: pytest-asyncio (auto mode), 578 tests, 86% coverage (CI threshold 80%). Frontend: vitest + @testing-library/react, 137 tests. Load tests: 7 (excluded from CI via `slow` marker)
 
 ## Git Workflow
 

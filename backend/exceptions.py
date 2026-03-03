@@ -4,7 +4,7 @@
 #  status codes without pattern-matching on message strings.
 #
 #  Depends on: (none)
-#  Used by:    services/planner.py, services/decomposer.py, routes/projects.py
+#  Used by:    services/planner.py, services/decomposer.py, services/git_service.py, routes/projects.py
 
 class OrchestrationError(Exception):
     """Base exception for all orchestration business logic errors."""
@@ -36,3 +36,7 @@ class OIDCError(OrchestrationError):
 
 class AccountLinkError(OrchestrationError):
     """Error linking or unlinking an OAuth provider."""
+
+
+class GitError(OrchestrationError):
+    """Error performing a git operation."""

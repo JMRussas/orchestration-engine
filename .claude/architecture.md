@@ -19,19 +19,23 @@ Requirements → Claude Sonnet → Plan JSON → User Approval → Task Rows + D
 
 ## Dependency Injection
 
-All singletons are wired via `dependency-injector` in `backend/container.py`:
+All services wired via `dependency-injector` in `backend/container.py`:
 
 ```
 Container
-├── config: AppConfig          (loads config.json)
-├── db: Database               (async SQLite via aiosqlite)
-├── auth: AuthService          (JWT + bcrypt)
-├── budget: BudgetManager      (spend tracking)
-├── progress: ProgressManager  (SSE broadcast)
-├── tool_registry: ToolRegistry
-├── anthropic_client: AsyncAnthropic
-├── resource_monitor: ResourceMonitor
-└── executor: Executor
+├── db: Database               (Singleton — async SQLite via aiosqlite)
+├── http_client: httpx.AsyncClient (Singleton — shared HTTP client)
+├── rag_cache: RAGIndexCache   (Singleton — lazy-loaded embedding indexes)
+├── tool_registry: ToolRegistry (Singleton — injectable tool set)
+├── auth: AuthService          (Singleton — JWT + bcrypt)
+├── oidc: OIDCService          (Singleton — OIDC provider auth)
+├── budget: BudgetManager      (Singleton — spend tracking)
+├── progress: ProgressManager  (Singleton — SSE broadcast)
+├── resource_monitor: ResourceMonitor (Singleton — health checks)
+├── git_service: GitService    (Factory — stateless git operations)
+├── planner: PlannerService    (Factory — Claude plan generation)
+├── decomposer: DecomposerService (Factory — plan → tasks + DAG)
+└── executor: Executor         (Singleton — async worker pool)
 ```
 
 Routes use `@inject` + `Depends(Provide[Container.xxx])` to receive dependencies.
@@ -44,16 +48,19 @@ Tests override providers: `container.db.override(providers.Object(test_db))`.
 - **Dual-mode init**: `Database.init(run_migrations=True)` for production (runs Alembic), `False` for tests (applies inline schema)
 - **Pre-Alembic detection**: `migrate.py` checks for existing tables without `alembic_version` and stamps them
 
-### Schema (8 tables)
+### Schema (10+ tables)
 
 - **users**: id, email, password_hash, display_name, role, is_active
-- **projects**: top-level container (owner_id → users)
+- **projects**: top-level container (owner_id → users, git columns: repo_path, git_base_branch, git_project_branch, git_worktree_path, git_state_json)
 - **plans**: Claude-generated plan JSON (versioned)
-- **tasks**: individual work units with model_tier, tools, context, output
+- **tasks**: individual work units with model_tier, tools, context, output, git_branch, git_commit_sha
 - **task_deps**: dependency DAG edges
 - **usage_log**: every API call (provider, model, tokens, cost)
 - **budget_periods**: aggregated daily/monthly spend
 - **task_events**: fine-grained event log for SSE
+- **checkpoints**: retry-exhausted task escalation for human resolution
+- **user_identities**: OIDC provider links (multi-provider per user)
+- **api_keys**: hashed API keys for programmatic access (models_metadata only — not yet in inline schema)
 
 ## Authentication
 
@@ -134,6 +141,33 @@ Background task (30s interval) health-checks:
 
 Tasks that need unavailable resources stay in queue until next tick.
 
+## Git Integration
+
+Optional per-project feature. Projects with `repo_path` set produce git commits during execution.
+
+**Status**: Phase 1 (foundation) complete. Phases 2-5 pending.
+
+| Phase | What | Status |
+|-------|------|--------|
+| 1 | GitService + schema + migration | Done (PR #8) |
+| 2 | Execution wiring (tasks → commits, branches, PR) | Pending |
+| 3 | Git tools for agent awareness (status/diff/log) | Pending |
+| 4 | REST API endpoints + frontend types | Pending |
+| 5 | Worktree isolation (many projects → same repo) | Pending |
+
+**GitService** (`backend/services/git_service.py`):
+- Stateless — all git state on disk or in DB
+- All methods: `asyncio.to_thread(subprocess.run(...))` with configurable timeout
+- Factory provider in DI container (not singleton)
+- Key methods: `validate_repo`, `create_branch`, `checkout`, `merge_branch`, `stage_and_commit`, `check_dirty`, `backup_dirty_state`, `create_worktree`, `push_branch`, `create_pr`
+
+**Config** (`git.*` section):
+- `enabled` (default true), `commit_author`, `branch_prefix` ("orch"), `non_code_output_path` (".orchestration"), `auto_pr`, `pr_remote`, `command_timeout` (30s)
+
+**Schema additions** (migration 011):
+- projects: `repo_path`, `git_base_branch`, `git_project_branch`, `git_worktree_path`, `git_state_json`
+- tasks: `git_branch`, `git_commit_sha`
+
 ## Test Architecture
 
 ```
@@ -169,13 +203,13 @@ tests/
     └── test_full_workflow.py          (2 tests)
 ```
 
-**Backend (pytest):** 390+ tests, 85% coverage (CI threshold: 75%)
+**Backend (pytest):** 578 tests, 86% coverage (CI threshold: 80%)
 - `tmp_db` fixture: fresh async Database with inline schema (no Alembic for speed)
 - `app_client`: DI container overrides for db, auth, budget, progress, executor, resource_monitor
 - `authed_client`: app_client + registered user + Bearer token header
 - Claude/Ollama mocked in all tests (no real API calls)
 
-**Frontend (vitest + @testing-library/react):** 118 tests across 17 files
+**Frontend (vitest + @testing-library/react):** 137 tests across 21 files
 
 ```
 frontend/src/
@@ -219,6 +253,7 @@ frontend/src/
 | services/planner.py | Plan generation | config, budget, model_router | routes/projects |
 | services/decomposer.py | Plan → tasks | db, model_router | routes/projects |
 | services/executor.py | Task execution | db, budget, model_router, tools, progress, resource_monitor | app.py |
+| services/git_service.py | Git operations | config, exceptions, db | container, git_lifecycle (Phase 2) |
 | services/budget.py | Cost tracking | db, config | executor, routes/usage |
 | services/model_router.py | Model selection | config | planner, decomposer, executor |
 | services/resource_monitor.py | Health checks | config | executor, routes/services |
@@ -254,3 +289,10 @@ frontend/src/
 - Rate limiter: shared instance in `backend/rate_limit.py` avoids circular imports between `app.py` ↔ `routes/projects.py`.
 - Auth middleware: `_validate_token()` shared helper deduplicates JWT validation for Bearer and SSE token paths.
 - Frontend refresh dedup: `_refreshPromise` module-level variable ensures concurrent 401s share one refresh call.
+- **GitService uses subprocess, not gitpython** — all git ops via `subprocess.run` wrapped in `asyncio.to_thread()`. No git library dependency.
+- **GitService is a Factory provider** (not Singleton) — stateless, safe to create multiple instances.
+- **`subprocess.TimeoutExpired` does NOT inherit from `OSError`** — must catch separately in git subprocess calls.
+- **Schema triple-sync**: git columns must be kept in sync across `connection.py` (inline `_SCHEMA`), `models_metadata.py` (Alembic), and migration files. Drift between these causes test failures or migration errors.
+- **Migration revision IDs**: use short strings like `"011"`, not full descriptive names. `down_revision` must match the exact `revision` string of the parent migration.
+- **`git status --short` unmerged codes**: 7 codes total (UU, AA, DD, AU, UA, DU, UD). Don't assume only UU/AA for conflict detection.
+- **Multiple Claude sessions sharing a repo**: use git worktrees (`.worktrees/{feature}`) to isolate concurrent work. Without this, sessions change branches out from under each other.
