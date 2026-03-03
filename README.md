@@ -224,4 +224,4 @@ PR-based workflow with structured code review. Each feature ships as a pull requ
 
 ## License
 
-MIT
+AGPL v3
