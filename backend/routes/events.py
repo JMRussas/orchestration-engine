@@ -49,5 +49,9 @@ async def stream_project_events(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            # Defense-in-depth: also set by SecurityHeadersMiddleware, but
+            # kept here in case middleware is ever removed or reordered.
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
         },
     )

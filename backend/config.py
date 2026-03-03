@@ -96,6 +96,10 @@ COMFYUI_DEFAULT_CHECKPOINT = cfg("comfyui.default_checkpoint", "sd_xl_base_1.0.s
 # RAG
 RAG_DATABASES = cfg("rag.databases", {})
 RAG_EMBED_DIMENSIONS = cfg("rag.embed_dimensions", 768)
+RAG_DIAGNOSTIC_INGEST_PATH = cfg("rag.diagnostic_ingest_path", "")
+
+# Diagnostic RAG
+DIAGNOSTIC_RAG_ENABLED = cfg("execution.diagnostic_rag_enabled", False)
 
 # Budget
 BUDGET_DAILY = cfg("budget.daily_limit_usd", 5.0)
@@ -117,6 +121,11 @@ VERIFICATION_MAX_TOKENS = cfg("execution.verification_max_tokens", 1024)
 CHECKPOINT_ON_RETRY_EXHAUSTED = cfg("execution.checkpoint_on_retry_exhausted", True)
 SHUTDOWN_GRACE_SECONDS = cfg("execution.shutdown_grace_seconds", 30)
 RESOURCE_SKIP_SECONDS = cfg("execution.resource_skip_seconds", 30)
+KNOWLEDGE_EXTRACTION_ENABLED = cfg("execution.knowledge_extraction_enabled", True)
+KNOWLEDGE_EXTRACTION_MODEL = cfg("execution.knowledge_extraction_model", "claude-haiku-4-5-20251001")
+KNOWLEDGE_EXTRACTION_MAX_TOKENS = cfg("execution.knowledge_extraction_max_tokens", 1024)
+KNOWLEDGE_INJECTION_MAX_CHARS = cfg("execution.knowledge_injection_max_chars", 3000)
+KNOWLEDGE_MIN_OUTPUT_LENGTH = cfg("execution.knowledge_min_output_length", 200)
 
 # Model pricing
 MODEL_PRICING = cfg("model_pricing", {})
@@ -131,6 +140,9 @@ AUTH_ACCESS_TOKEN_EXPIRE_MINUTES = cfg("auth.access_token_expire_minutes", 30)
 AUTH_REFRESH_TOKEN_EXPIRE_DAYS = cfg("auth.refresh_token_expire_days", 7)
 AUTH_ALLOW_REGISTRATION = cfg("auth.allow_registration", True)
 AUTH_SSE_TOKEN_EXPIRE_SECONDS = cfg("auth.sse_token_expire_seconds", 60)
+AUTH_LOGIN_LOCKOUT_THRESHOLD = cfg("auth.login_lockout_threshold", 5)
+AUTH_LOGIN_LOCKOUT_WINDOW_SEC = cfg("auth.login_lockout_window_seconds", 300)
+AUTH_LOGIN_MAX_TRACKED = 10_000
 AUTH_OIDC_PROVIDERS: list[dict] = cfg("auth.oidc_providers", [])
 AUTH_OIDC_REDIRECT_URIS: list[str] = cfg("auth.oidc_redirect_uris", [])
 
@@ -191,6 +203,16 @@ def validate_config():
             raise ConfigError(f"OIDC provider '{name}' is missing required 'client_id' field")
         if not prov.get("client_secret"):
             raise ConfigError(f"OIDC provider '{name}' is missing required 'client_secret' field")
+
+    # Fatal: lockout config must be valid
+    if not isinstance(AUTH_LOGIN_LOCKOUT_THRESHOLD, int) or AUTH_LOGIN_LOCKOUT_THRESHOLD < 1:
+        raise ConfigError(
+            f"auth.login_lockout_threshold must be >= 1, got {AUTH_LOGIN_LOCKOUT_THRESHOLD}"
+        )
+    if not isinstance(AUTH_LOGIN_LOCKOUT_WINDOW_SEC, (int, float)) or AUTH_LOGIN_LOCKOUT_WINDOW_SEC <= 0:
+        raise ConfigError(
+            f"auth.login_lockout_window_seconds must be > 0, got {AUTH_LOGIN_LOCKOUT_WINDOW_SEC}"
+        )
 
     # Warning: OIDC redirect URIs not configured when providers exist
     if AUTH_OIDC_PROVIDERS and not AUTH_OIDC_REDIRECT_URIS:
