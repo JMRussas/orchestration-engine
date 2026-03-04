@@ -23,7 +23,7 @@ logger = logging.getLogger("orchestration.auth")
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 
-async def _validate_token(auth: AuthService, raw_token: str, expected_type: str = "access") -> dict:
+async def _validate_token(auth: AuthService, raw_token: str, expected_type: str = "access") -> tuple[dict, dict]:
     """Decode a JWT, check its type, and return the active user.
 
     Shared logic for Bearer header auth and SSE query-param auth.

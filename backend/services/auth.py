@@ -328,36 +328,48 @@ class AuthService:
         token_hash = self._hash_token(refresh_token)
 
         if family_id:
-            # Look up the token in the DB
-            record = await self._db.fetchone(
-                "SELECT * FROM refresh_token_families WHERE token_hash = ?",
-                (token_hash,),
-            )
+            # Atomic read-check-consume inside a transaction to prevent TOCTOU:
+            # two concurrent refresh requests for the same token must not both succeed.
+            # BEGIN IMMEDIATE serializes writers, so the second request will see
+            # is_revoked=1 after the first commits.
+            #
+            # Revocation on reuse/compromise is done inside the transaction so it
+            # commits before we raise. (transaction() rolls back on exception, so
+            # we must NOT raise inside the block — instead set an error to raise after.)
+            _refresh_error: str | None = None
 
-            if not record:
-                # Token hash not in DB but has a family ID — reuse of a consumed token.
-                # Revoke the entire family to protect the user.
-                logger.warning(
-                    "Refresh token reuse detected for family %s, user %s — revoking family",
-                    family_id, user_id,
+            async with self._db.transaction():
+                record = await self._db.fetchone(
+                    "SELECT * FROM refresh_token_families WHERE token_hash = ?",
+                    (token_hash,),
                 )
-                await self._revoke_family(family_id)
-                raise ValueError("Token reuse detected — all sessions revoked. Please log in again.")
 
-            if record["is_revoked"]:
-                # Token was already revoked — family compromise.
-                logger.warning(
-                    "Revoked refresh token used for family %s, user %s — revoking family",
-                    family_id, user_id,
-                )
-                await self._revoke_family(family_id)
-                raise ValueError("Token has been revoked — all sessions revoked. Please log in again.")
+                if not record:
+                    # Token hash not in DB but has a family ID — reuse of a consumed token.
+                    logger.warning(
+                        "Refresh token reuse detected for family %s, user %s — revoking family",
+                        family_id, user_id,
+                    )
+                    await self._revoke_family(family_id)
+                    _refresh_error = "Token reuse detected — all sessions revoked. Please log in again."
+                elif record["is_revoked"]:
+                    # Token was already revoked — family compromise.
+                    logger.warning(
+                        "Revoked refresh token used for family %s, user %s — revoking family",
+                        family_id, user_id,
+                    )
+                    await self._revoke_family(family_id)
+                    _refresh_error = "Token has been revoked — all sessions revoked. Please log in again."
+                else:
+                    # Valid token — consume it (mark as revoked so it can't be reused)
+                    await self._db.execute_write(
+                        "UPDATE refresh_token_families SET is_revoked = 1 WHERE id = ?",
+                        (record["id"],),
+                    )
 
-            # Valid token — consume it (mark as revoked so it can't be reused)
-            await self._db.execute_write(
-                "UPDATE refresh_token_families SET is_revoked = 1 WHERE id = ?",
-                (record["id"],),
-            )
+            # Raise AFTER transaction commits, so revocation is persisted
+            if _refresh_error:
+                raise ValueError(_refresh_error)
         else:
             # Legacy token (no fid) — accept gracefully, start a new family
             family_id = None

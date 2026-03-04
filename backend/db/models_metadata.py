@@ -176,6 +176,7 @@ refresh_token_families = Table(
     Column("created_at", Float, nullable=False),
     Column("expires_at", Float, nullable=False),
 )
+
 user_identities = Table(
     "user_identities",
     metadata,
