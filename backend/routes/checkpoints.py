@@ -12,11 +12,13 @@ import time
 from dependency_injector.wiring import inject, Provide
 from fastapi import APIRouter, Depends, HTTPException
 
+from backend.config import DIAGNOSTIC_RAG_ENABLED
 from backend.container import Container
 from backend.db.connection import Database
 from backend.middleware.auth import get_current_user
 from backend.models.enums import TaskStatus
 from backend.models.schemas import CheckpointOut, CheckpointResolve
+from backend.services.diagnostic_ingest import DiagnosticIngester
 
 router = APIRouter(prefix="/checkpoints", tags=["checkpoints"])
 
@@ -101,6 +103,7 @@ async def resolve_checkpoint(
     body: CheckpointResolve,
     current_user: dict = Depends(get_current_user),
     db: Database = Depends(Provide[Container.db]),
+    diagnostic_ingester: DiagnosticIngester = Depends(Provide[Container.diagnostic_ingester]),
 ) -> CheckpointOut:
     """Resolve a checkpoint with user action.
 
@@ -131,6 +134,20 @@ async def resolve_checkpoint(
                 "retry_count = 0, output_text = NULL, completed_at = NULL, updated_at = ? WHERE id = ?",
                 (TaskStatus.PENDING, json.dumps(ctx), now, task_id),
             )
+
+        # Ingest human guidance as a diagnostic resolution
+        if DIAGNOSTIC_RAG_ENABLED and body.guidance:
+            try:
+                await diagnostic_ingester.ingest_resolution(
+                    error_text=row["summary"],
+                    resolution_text=body.guidance,
+                    error_context=f"Checkpoint for task {task_id}",
+                    tags=["checkpoint", "human-resolved"],
+                    gotcha=body.gotcha,
+                )
+            except Exception:
+                pass  # Ingestion failure never blocks checkpoint resolution
+
     elif body.action == "skip":
         if task_id:
             await db.execute_write(

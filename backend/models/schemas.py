@@ -151,6 +151,21 @@ class CheckpointResolve(BaseModel):
     """User response to a checkpoint."""
     action: str = Field(..., pattern="^(retry|skip|fail)$")
     guidance: str = Field(default="", max_length=10_000)
+    gotcha: str = Field(default="", max_length=2_000)
+
+
+# ---------------------------------------------------------------------------
+# Project Knowledge
+# ---------------------------------------------------------------------------
+
+class FindingOut(BaseModel):
+    id: str
+    project_id: str
+    task_id: str | None = None
+    category: str
+    content: str
+    source_task_title: str | None = None
+    created_at: float
 
 
 # ---------------------------------------------------------------------------

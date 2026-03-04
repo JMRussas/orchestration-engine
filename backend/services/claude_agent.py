@@ -3,13 +3,14 @@
 #  Runs a single task via the Claude API with multi-turn tool support.
 #  Extracted from executor.py for modularity.
 #
-#  Depends on: config.py, services/budget.py, services/model_router.py, tools/registry.py
+#  Depends on: config.py, db/connection.py, services/budget.py,
+#              services/model_router.py, tools/registry.py
 #  Used by:    services/task_lifecycle.py
 
 import json
 import logging
 
-from backend.config import API_TIMEOUT, MAX_TOOL_ROUNDS
+from backend.config import API_TIMEOUT, KNOWLEDGE_INJECTION_MAX_CHARS, MAX_TOOL_ROUNDS
 from backend.models.enums import ModelTier
 from backend.services.model_router import calculate_cost, get_model_id
 
@@ -24,6 +25,7 @@ async def run_claude_task(
     tool_registry,
     budget,
     progress,
+    db=None,
 ) -> dict:
     """Execute a task via the Claude API with tool support.
 
@@ -36,6 +38,8 @@ async def run_claude_task(
         tool_registry: ToolRegistry for tool definitions and execution.
         budget: BudgetManager instance.
         progress: ProgressManager instance.
+        db: Database instance (optional). Used to inject project knowledge
+            into the system prompt when available.
     """
     tier = ModelTier(task_row["model_tier"])
     model_id = get_model_id(tier)
@@ -45,8 +49,48 @@ async def run_claude_task(
     # Build context
     context = json.loads(task_row["context_json"]) if task_row["context_json"] else []
     system_parts = [task_row["system_prompt"] or "You are a focused task executor."]
+    system_parts.append(
+        "\n<meta_instructions>\n"
+        "If you discover any constraints, gotchas, API quirks, or architectural "
+        "decisions during this task, note them clearly in your output so they can "
+        "be preserved for other tasks.\n"
+        "</meta_instructions>"
+    )
     for ctx in context:
-        system_parts.append(f"\n[{ctx.get('type', 'context')}]\n{ctx.get('content', '')}")
+        ctx_type = ctx.get("type", "context")
+        system_parts.append(f"\n<{ctx_type}>\n{ctx.get('content', '')}\n</{ctx_type}>")
+
+    # Inject project knowledge from earlier tasks
+    if db is not None:
+        try:
+            knowledge_rows = await db.fetchall(
+                "SELECT category, content, source_task_title FROM project_knowledge "
+                "WHERE project_id = ? ORDER BY created_at DESC",
+                (project_id,),
+            )
+            if knowledge_rows:
+                knowledge_parts = []
+                total_chars = 0
+                for kr in knowledge_rows:
+                    entry = f"[{kr['category']}] {kr['content']}"
+                    if kr["source_task_title"]:
+                        entry += f" (from: {kr['source_task_title']})"
+                    if total_chars + len(entry) > KNOWLEDGE_INJECTION_MAX_CHARS:
+                        break
+                    knowledge_parts.append(entry)
+                    total_chars += len(entry)
+                if knowledge_parts:
+                    system_parts.append(
+                        "\n<project_knowledge>\n"
+                        "The following findings were discovered by earlier tasks "
+                        "in this project. Use them to avoid repeating mistakes "
+                        "and to maintain consistency:\n"
+                        + "\n".join(f"- {p}" for p in knowledge_parts)
+                        + "\n</project_knowledge>"
+                    )
+        except Exception as e:
+            logger.debug("Failed to inject project knowledge: %s", e)
+
     system_prompt = "\n".join(system_parts)
 
     # Build tool definitions

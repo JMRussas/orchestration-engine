@@ -72,6 +72,21 @@ class PlanningRigor(str, Enum):
     L3 = "L3"   # Thorough — phases + risk + test strategy
 
 
+class ExecutionMode(str, Enum):
+    AUTO = "auto"           # Engine executes all tasks (current behavior)
+    HYBRID = "hybrid"       # Engine executes Ollama, external handles Claude tiers
+    EXTERNAL = "external"   # External handles everything
+
+
+class FindingCategory(str, Enum):
+    CONSTRAINT = "constraint"       # "X must be Y", "never do Z"
+    DECISION = "decision"           # "we chose X over Y because..."
+    DISCOVERY = "discovery"         # API behavior, library quirks
+    REFERENCE = "reference"         # useful URLs, doc pointers, code patterns
+    GOTCHA = "gotcha"               # things that don't work as expected
+    ARCHITECTURE = "architecture"   # structural choices, data flow
+
+
 class ResourceStatus(str, Enum):
     ONLINE = "online"
     OFFLINE = "offline"

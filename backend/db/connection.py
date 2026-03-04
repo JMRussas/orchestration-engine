@@ -159,9 +159,24 @@ CREATE TABLE IF NOT EXISTS user_identities (
     created_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS project_knowledge (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+    category TEXT NOT NULL DEFAULT 'discovery',
+    content TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    source_task_title TEXT,
+    created_at REAL NOT NULL
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_identities_provider_uid
     ON user_identities(provider, provider_user_id);
 CREATE INDEX IF NOT EXISTS idx_identities_user ON user_identities(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_project ON project_knowledge(project_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_dedup
+    ON project_knowledge(project_id, content_hash);
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_checkpoints_project ON checkpoints(project_id);
@@ -172,7 +187,6 @@ CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority);
 CREATE INDEX IF NOT EXISTS idx_tasks_wave ON tasks(wave);
 CREATE INDEX IF NOT EXISTS idx_deps_depends ON task_deps(depends_on);
 CREATE INDEX IF NOT EXISTS idx_usage_project ON usage_log(project_id);
-CREATE INDEX IF NOT EXISTS idx_usage_task ON usage_log(task_id);
 CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage_log(timestamp);
 CREATE INDEX IF NOT EXISTS idx_budget_type ON budget_periods(period_type);
 CREATE INDEX IF NOT EXISTS idx_events_project ON task_events(project_id);

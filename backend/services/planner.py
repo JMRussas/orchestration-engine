@@ -6,6 +6,7 @@
 #  Used by:    routes/projects.py, container.py
 
 import json
+import re
 import time
 import uuid
 
@@ -28,11 +29,21 @@ _MAX_TOKENS_BY_RIGOR = {
 }
 
 
+def _strip_trailing_commas(json_str: str) -> str:
+    """Remove trailing commas before ] and } that LLMs commonly produce.
+
+    Operates outside of string literals to avoid corrupting values.
+    E.g. [{"a":1},] -> [{"a":1}] and {"a":1,} -> {"a":1}
+    """
+    return re.sub(r',\s*([}\]])', r'\1', json_str)
+
+
 def _extract_json_object(text: str) -> dict | None:
     """Extract the first balanced JSON object from text.
 
     Uses brace-counting instead of a greedy regex to avoid capturing
     past the actual closing brace when Claude wraps JSON in explanation.
+    Falls back to stripping trailing commas if strict parsing fails.
     """
     start = text.find("{")
     if start == -1:
@@ -59,10 +70,15 @@ def _extract_json_object(text: str) -> dict | None:
         elif ch == "}":
             depth -= 1
             if depth == 0:
+                raw = text[start:i + 1]
                 try:
-                    return json.loads(text[start:i + 1])
+                    return json.loads(raw)
                 except json.JSONDecodeError:
-                    return None
+                    # Retry after stripping trailing commas
+                    try:
+                        return json.loads(_strip_trailing_commas(raw))
+                    except json.JSONDecodeError:
+                        return None
     return None
 
 
@@ -74,7 +90,7 @@ _PLANNING_PREAMBLE = """You are a project planner for an AI orchestration engine
 
 Requirements are numbered [R1], [R2], etc. for traceability.
 
-Task guidelines:
+<task_guidelines>
 - Break work into small, focused tasks. Each task should be completable in a single AI conversation.
 - Keep task descriptions self-contained — include enough context for a fresh AI instance.
 - Use "depends_on" to reference task indices (0-based) for ordering dependencies.
@@ -89,14 +105,16 @@ Task guidelines:
 - Map each task to the requirement IDs it satisfies using requirement_ids.
 - Include verification_criteria: a concrete check to confirm task completion.
 - Include affected_files: list of files this task will create or modify (best guess).
+</task_guidelines>
 
-Available tools each task can request:
+<available_tools>
 - search_knowledge: Semantic search across code and documentation RAG databases
 - lookup_type: Exact keyword/type name lookup in RAG databases
 - local_llm: Free local LLM for drafts, summaries, sub-tasks
 - generate_image: Queue image generation via ComfyUI
 - read_file: Read files from the project workspace
 - write_file: Write files to the project workspace
+</available_tools>
 
 """
 
@@ -214,7 +232,7 @@ Test strategy:
 - Reference specific tasks that perform testing/verification.
 - Note coverage gaps the user should be aware of.
 
-Respond with ONLY the JSON plan, no markdown fences or explanation."""
+You may optionally begin your response with a <thinking> block to reason through dependencies, risks, and trade-offs before producing the plan. After your reasoning (if any), output the JSON plan with no markdown fences."""
 
 _RIGOR_SUFFIXES = {
     PlanningRigor.L1: _RIGOR_SUFFIX_L1,

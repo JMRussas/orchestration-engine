@@ -31,7 +31,8 @@ async def run_ollama_task(*, task_row, http_client, budget) -> dict:
     context = json.loads(task_row["context_json"]) if task_row["context_json"] else []
     system_parts = [task_row["system_prompt"] or "You are a focused task executor."]
     for ctx in context:
-        system_parts.append(f"\n[{ctx.get('type', 'context')}]\n{ctx.get('content', '')}")
+        ctx_type = ctx.get("type", "context")
+        system_parts.append(f"\n<{ctx_type}>\n{ctx.get('content', '')}\n</{ctx_type}>")
     system_prompt = "\n".join(system_parts)
 
     body = {

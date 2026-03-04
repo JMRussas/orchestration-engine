@@ -38,13 +38,16 @@ _EST_TASK_INPUT_TOKENS = 1500  # system prompt + context + tool definitions
 class Executor:
     """Async task executor with concurrency control and tool support."""
 
-    def __init__(self, db, budget, progress, resource_monitor, tool_registry, http_client=None):
+    def __init__(self, db, budget, progress, resource_monitor, tool_registry,
+                 http_client=None, rag_cache=None, diagnostic_ingester=None):
         self._db = db
         self._budget = budget
         self._progress = progress
         self._resource_monitor = resource_monitor
         self._tool_registry = tool_registry
         self._http = http_client  # Shared httpx client for Ollama calls
+        self._rag_cache = rag_cache
+        self._diagnostic_ingester = diagnostic_ingester
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
         self._task: asyncio.Task | None = None
         self._running = False
@@ -270,6 +273,8 @@ class Executor:
                         semaphore=self._semaphore,
                         dispatched=self._dispatched,
                         retry_after=self._retry_after,
+                        rag_cache=self._rag_cache,
+                        diagnostic_ingester=self._diagnostic_ingester,
                     )
                 )
                 self._in_flight.add(handle)

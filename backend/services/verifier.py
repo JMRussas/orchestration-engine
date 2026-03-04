@@ -12,6 +12,7 @@ import logging
 from backend.config import VERIFICATION_MAX_TOKENS, VERIFICATION_MODEL
 from backend.models.enums import VerificationResult
 from backend.services.model_router import calculate_cost
+from backend.services.planner import _extract_json_object
 
 logger = logging.getLogger("orchestration.verifier")
 
@@ -19,23 +20,25 @@ _VERIFICATION_PROMPT = """\
 You are a task output verifier. Given a task description and the output produced,
 assess whether the output is acceptable.
 
-Check for:
-1. **Substantiveness**: Is the output real content, or is it empty/stub/placeholder?
-2. **Relevance**: Does the output address the task description?
-3. **Completeness**: Does the output cover the key aspects of what was asked?
+<criteria>
+1. Substantiveness: Is the output real content, or is it empty/stub/placeholder?
+2. Relevance: Does the output address the task description?
+3. Completeness: Does the output cover the key aspects of what was asked?
+</criteria>
+
+<verdict_rules>
+- "passed": Output is substantive, relevant, and reasonably complete.
+- "gaps_found": Output is empty, a stub, placeholder, off-topic, or missing key aspects.
+  The task should be retried with feedback.
+- "human_needed": Output has fundamental issues that require human judgment
+  (e.g., ambiguous requirements, conflicting instructions, needs domain expertise).
+</verdict_rules>
 
 Respond with ONLY a JSON object (no markdown):
 {
   "verdict": "passed" | "gaps_found" | "human_needed",
   "notes": "Brief explanation of your assessment"
 }
-
-Rules:
-- "passed": Output is substantive, relevant, and reasonably complete.
-- "gaps_found": Output is empty, a stub, placeholder, off-topic, or missing key aspects.
-  The task should be retried with feedback.
-- "human_needed": Output has fundamental issues that require human judgment
-  (e.g., ambiguous requirements, conflicting instructions, needs domain expertise).
 """
 
 
@@ -98,9 +101,14 @@ async def verify_output(
 
     try:
         parsed = json.loads(raw)
+    except (json.JSONDecodeError, AttributeError):
+        # Fallback: extract JSON from markdown fences / trailing commas
+        parsed = _extract_json_object(raw)
+
+    if parsed and isinstance(parsed, dict):
         verdict_str = parsed.get("verdict", "passed")
         notes = parsed.get("notes", "")
-    except (json.JSONDecodeError, AttributeError):
+    else:
         # If we can't parse, escalate to human review (don't silently pass)
         logger.warning("Could not parse verification response, escalating to human review: %s", raw[:200])
         verdict_str = "human_needed"

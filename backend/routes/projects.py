@@ -26,7 +26,7 @@ from backend.exceptions import (
 from backend.rate_limit import limiter
 from backend.middleware.auth import get_current_user
 from backend.models.enums import PlanStatus, ProjectStatus, TaskStatus
-from backend.models.schemas import PlanOut, ProjectCreate, ProjectOut, ProjectUpdate
+from backend.models.schemas import FindingOut, PlanOut, ProjectCreate, ProjectOut, ProjectUpdate
 from backend.services.decomposer import DecomposerService
 from backend.services.planner import PlannerService
 
@@ -571,6 +571,20 @@ async def export_project(
         for u in usage_rows
     ]
 
+    # Knowledge
+    knowledge_rows = await db.fetchall(
+        "SELECT * FROM project_knowledge WHERE project_id = ? ORDER BY created_at ASC",
+        (project_id,),
+    )
+    knowledge = [
+        {
+            "id": k["id"], "task_id": k["task_id"], "category": k["category"],
+            "content": k["content"], "source_task_title": k["source_task_title"],
+            "created_at": k["created_at"],
+        }
+        for k in knowledge_rows
+    ]
+
     return JSONResponse(
         content={
             "exported_at": time.time(),
@@ -580,6 +594,7 @@ async def export_project(
             "events": events,
             "checkpoints": checkpoints,
             "usage": usage,
+            "knowledge": knowledge,
         },
         headers={"Content-Disposition": f'attachment; filename="project_{project_id}.json"'},
     )
@@ -629,3 +644,68 @@ async def get_coverage(
         "uncovered_count": sum(1 for r in requirements_detail if not r["covered"]),
         "requirements": requirements_detail,
     }
+
+
+# ---------------------------------------------------------------------------
+# Project Knowledge
+# ---------------------------------------------------------------------------
+
+@router.get("/{project_id}/knowledge")
+@inject
+async def list_knowledge(
+    project_id: str,
+    category: str | None = None,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(Provide[Container.db]),
+) -> list[FindingOut]:
+    """List knowledge findings for a project, optionally filtered by category."""
+    await _get_owned_project(db, project_id, current_user)
+
+    if category:
+        rows = await db.fetchall(
+            "SELECT * FROM project_knowledge WHERE project_id = ? AND category = ? "
+            "ORDER BY created_at DESC",
+            (project_id, category),
+        )
+    else:
+        rows = await db.fetchall(
+            "SELECT * FROM project_knowledge WHERE project_id = ? "
+            "ORDER BY created_at DESC",
+            (project_id,),
+        )
+
+    return [
+        FindingOut(
+            id=r["id"],
+            project_id=r["project_id"],
+            task_id=r["task_id"],
+            category=r["category"],
+            content=r["content"],
+            source_task_title=r["source_task_title"],
+            created_at=r["created_at"],
+        )
+        for r in rows
+    ]
+
+
+@router.delete("/{project_id}/knowledge/{finding_id}", status_code=204)
+@inject
+async def delete_finding(
+    project_id: str,
+    finding_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(Provide[Container.db]),
+):
+    """Delete a knowledge finding."""
+    await _get_owned_project(db, project_id, current_user)
+
+    row = await db.fetchone(
+        "SELECT id FROM project_knowledge WHERE id = ? AND project_id = ?",
+        (finding_id, project_id),
+    )
+    if not row:
+        raise HTTPException(404, f"Finding {finding_id} not found")
+
+    await db.execute_write(
+        "DELETE FROM project_knowledge WHERE id = ?", (finding_id,),
+    )
