@@ -4,9 +4,11 @@
 #  Extracted from executor.py for modularity.
 #
 #  Depends on: config.py, services/claude_agent.py, services/ollama_agent.py,
-#              services/budget.py, services/progress.py
+#              services/budget.py, services/progress.py, services/diagnostic_ingest.py,
+#              tools/rag.py (_embed_query, RAGIndexCache)
 #  Used by:    services/executor.py
 
+import asyncio
 import json
 import logging
 import random
@@ -19,6 +21,8 @@ import httpx
 from backend.config import (
     CHECKPOINT_ON_RETRY_EXHAUSTED,
     CONTEXT_FORWARD_MAX_CHARS,
+    DIAGNOSTIC_RAG_ENABLED,
+    KNOWLEDGE_EXTRACTION_ENABLED,
     VERIFICATION_ENABLED,
 )
 from backend.logging_config import set_task_id
@@ -39,6 +43,91 @@ _TRANSIENT_ERRORS = (
 
 # Maximum verification feedback entries kept in context to prevent unbounded growth
 _MAX_VERIFICATION_FEEDBACKS = 3
+
+# Diagnostic RAG confidence threshold — only inject HIGH-confidence results
+_DIAGNOSTIC_CONFIDENCE_THRESHOLD = 0.80
+
+
+async def _search_diagnostic_rag(error_text: str, rag_cache, http_client) -> str | None:
+    """Search diagnostic RAG for a known resolution to an error.
+
+    Returns the matching chunk text if a high-confidence result exists,
+    None otherwise. Never raises — returns None on any failure.
+    """
+    try:
+        from backend.tools.rag import _embed_query
+
+        idx = await rag_cache.get("diagnostic")
+        if not idx or idx._state != "loaded" or idx.embeddings is None:
+            return None
+
+        import numpy as np
+
+        query_vec = await _embed_query(error_text, http_client)
+        if query_vec is None:
+            return None
+
+        similarities = idx.embeddings @ query_vec
+        top_idx = int(np.argmax(similarities))
+        top_score = float(similarities[top_idx])
+
+        if top_score < _DIAGNOSTIC_CONFIDENCE_THRESHOLD:
+            return None
+
+        chunk_id = idx.chunk_ids[top_idx]
+        rows = await asyncio.to_thread(
+            idx.query_sync, "SELECT text, gotcha FROM chunks WHERE id = ?", (chunk_id,)
+        )
+        if not rows:
+            return None
+
+        text = rows[0]["text"]
+        try:
+            gotcha = rows[0]["gotcha"] or ""
+        except (IndexError, KeyError):
+            gotcha = ""
+
+        result = f"[Diagnostic RAG match, score={top_score:.3f}]\n{text}"
+        if gotcha:
+            result += f"\n[CAUTION: {gotcha}]"
+        return result
+
+    except Exception as e:
+        logger.debug("Diagnostic RAG search failed: %s", e)
+        return None
+
+
+async def _ingest_retry_success(task_row, output_text: str, db, ingester):
+    """Capture a successful retry as a diagnostic resolution.
+
+    Called when a task completes after retry_count > 0 — the last error
+    becomes the error_pattern, the successful output becomes the resolution.
+    """
+    try:
+        # Get the last error event for this task
+        last_error = await db.fetchone(
+            "SELECT message FROM task_events "
+            "WHERE task_id = ? AND event_type IN ('task_retry', 'task_failed') "
+            "ORDER BY timestamp DESC LIMIT 1",
+            (task_row["id"],),
+        )
+        if not last_error or not last_error["message"]:
+            return
+
+        error_text = last_error["message"]
+        resolution_text = (output_text or "")[:2000]
+        if not resolution_text:
+            return
+
+        await ingester.ingest_resolution(
+            error_text=error_text,
+            resolution_text=f"Task '{task_row['title']}' succeeded after retry: {resolution_text}",
+            error_context=f"Task type: {task_row.get('task_type', 'unknown')}, "
+                          f"model: {task_row.get('model_tier', 'unknown')}",
+            tags=["auto-captured", "retry-success"],
+        )
+    except Exception as e:
+        logger.debug("Failed to ingest retry success: %s", e)
 
 
 async def create_checkpoint(
@@ -211,6 +300,8 @@ async def execute_task(
     semaphore,
     dispatched: set,
     retry_after: dict,
+    rag_cache=None,
+    diagnostic_ingester=None,
 ):
     """Execute a single task with semaphore-controlled concurrency.
 
@@ -226,6 +317,8 @@ async def execute_task(
         semaphore: asyncio.Semaphore for concurrency control.
         dispatched: Mutable set of currently dispatched task IDs.
         retry_after: Mutable dict of task_id → earliest retry timestamp.
+        rag_cache: RAGIndexCache for diagnostic search (optional).
+        diagnostic_ingester: DiagnosticIngester for feedback loop (optional).
     """
     task_id = task_row["id"]
     set_task_id(task_id)
@@ -253,6 +346,7 @@ async def execute_task(
                     result = await run_claude_task(
                         task_row=task_row, est_cost=est_cost, client=client,
                         tool_registry=tool_registry, budget=budget, progress=progress,
+                        db=db,
                     )
 
                 # Handle budget exhaustion — mark for review, don't complete
@@ -313,21 +407,67 @@ async def execute_task(
                     completed_task=task_row, output_text=result["output"], db=db,
                 )
 
+                # Learn from success-after-retry: capture the error→resolution pair
+                if (DIAGNOSTIC_RAG_ENABLED and diagnostic_ingester
+                        and task_row["retry_count"] > 0):
+                    await _ingest_retry_success(
+                        task_row, result["output"], db, diagnostic_ingester,
+                    )
+
+                # Extract reusable knowledge from task output
+                if KNOWLEDGE_EXTRACTION_ENABLED and tier != ModelTier.OLLAMA and client:
+                    from backend.services.knowledge_extractor import extract_knowledge
+                    await extract_knowledge(
+                        task_title=task_row["title"],
+                        task_description=task_row["description"],
+                        output_text=result["output"],
+                        client=client,
+                        budget=budget,
+                        project_id=project_id,
+                        task_id=task_id,
+                        db=db,
+                    )
+
             except _TRANSIENT_ERRORS as e:
                 retry_count = task_row["retry_count"]
                 max_retries = task_row["max_retries"]
                 if retry_count < max_retries:
+                    # Search diagnostic RAG for known resolutions before retry
+                    diagnostic_ctx = None
+                    if DIAGNOSTIC_RAG_ENABLED and rag_cache:
+                        diagnostic_ctx = await _search_diagnostic_rag(
+                            str(e), rag_cache, http_client,
+                        )
+
                     # Schedule retry via retry_after instead of sleeping
                     # inside the semaphore. The tick loop will re-dispatch
                     # once the backoff period expires.
                     delay = min(5 * (2 ** retry_count) + random.uniform(0, 2), 120)
                     retry_after[task_id] = time.time() + delay
-                    await db.execute_write(
-                        "UPDATE tasks SET status = ?, retry_count = retry_count + 1, "
-                        "error = ?, updated_at = ? WHERE id = ?",
-                        (TaskStatus.PENDING, f"Transient error (retry {retry_count + 1}): {e}",
-                         time.time(), task_id),
-                    )
+
+                    # Inject diagnostic suggestion into task context if found
+                    if diagnostic_ctx:
+                        task_ctx = await db.fetchone(
+                            "SELECT context_json FROM tasks WHERE id = ?", (task_id,),
+                        )
+                        ctx = json.loads(task_ctx["context_json"]) if task_ctx and task_ctx["context_json"] else []
+                        ctx.append({
+                            "type": "diagnostic_suggestion",
+                            "content": diagnostic_ctx,
+                        })
+                        await db.execute_write(
+                            "UPDATE tasks SET status = ?, retry_count = retry_count + 1, "
+                            "error = ?, context_json = ?, updated_at = ? WHERE id = ?",
+                            (TaskStatus.PENDING, f"Transient error (retry {retry_count + 1}): {e}",
+                             json.dumps(ctx), time.time(), task_id),
+                        )
+                    else:
+                        await db.execute_write(
+                            "UPDATE tasks SET status = ?, retry_count = retry_count + 1, "
+                            "error = ?, updated_at = ? WHERE id = ?",
+                            (TaskStatus.PENDING, f"Transient error (retry {retry_count + 1}): {e}",
+                             time.time(), task_id),
+                        )
                     await progress.push_event(
                         project_id, "task_retry",
                         f"{task_row['title']}: retrying in {delay:.0f}s ({e})",

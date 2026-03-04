@@ -19,6 +19,7 @@ from backend.services.git_service import GitService
 from backend.services.planner import PlannerService
 from backend.services.progress import ProgressManager
 from backend.services.resource_monitor import ResourceMonitor
+from backend.services.diagnostic_ingest import DiagnosticIngester
 from backend.tools.rag import RAGIndexCache
 from backend.tools.registry import ToolRegistry
 
@@ -62,6 +63,7 @@ class Container(containers.DeclarativeContainer):
     budget = providers.Singleton(BudgetManager, db=db)
     progress = providers.Singleton(ProgressManager, db=db)
     resource_monitor = providers.Singleton(ResourceMonitor)
+    diagnostic_ingester = providers.Singleton(DiagnosticIngester)
 
     # --- Git ---
     git_service = providers.Factory(GitService, db=db)
@@ -79,4 +81,6 @@ class Container(containers.DeclarativeContainer):
         resource_monitor=resource_monitor,
         tool_registry=tool_registry,
         http_client=http_client,
+        rag_cache=rag_cache,
+        diagnostic_ingester=diagnostic_ingester,
     )

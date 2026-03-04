@@ -191,6 +191,19 @@ user_identities = Table(
     Column("created_at", Float, nullable=False),
 )
 
+project_knowledge = Table(
+    "project_knowledge",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("project_id", Text, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+    Column("task_id", Text, ForeignKey("tasks.id", ondelete="SET NULL")),
+    Column("category", Text, nullable=False, server_default="discovery"),
+    Column("content", Text, nullable=False),
+    Column("content_hash", Text, nullable=False),
+    Column("source_task_title", Text),
+    Column("created_at", Float, nullable=False),
+)
+
 # Indexes
 Index("idx_identities_user", user_identities.c.user_id)
 Index("idx_identities_provider_uid", user_identities.c.provider, user_identities.c.provider_user_id, unique=True)
@@ -216,3 +229,5 @@ Index("idx_deps_task_id", task_deps.c.task_id)
 Index("idx_usage_project_timestamp", usage_log.c.project_id, usage_log.c.timestamp)
 Index("idx_api_keys_hash", api_keys.c.key_hash)
 Index("idx_api_keys_user", api_keys.c.user_id)
+Index("idx_knowledge_project", project_knowledge.c.project_id)
+Index("idx_knowledge_dedup", project_knowledge.c.project_id, project_knowledge.c.content_hash, unique=True)

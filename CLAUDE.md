@@ -60,6 +60,7 @@ docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 | `backend/services/claude_agent.py` | Claude API task runner with multi-turn tool support |
 | `backend/services/ollama_agent.py` | Ollama task runner |
 | `backend/services/verifier.py` | Post-completion output verification via Haiku |
+| `backend/services/knowledge_extractor.py` | Post-completion knowledge extraction via Haiku |
 | `backend/services/budget.py` | Spending tracking, limit enforcement |
 | `backend/services/model_router.py` | Model tier selection, cost calculation |
 | `backend/services/git_service.py` | Stateless git operations via subprocess + asyncio.to_thread |
@@ -78,6 +79,7 @@ docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 | Topic | Location |
 |-------|----------|
 | Architecture | [.claude/architecture.md](.claude/architecture.md) |
+| Prompt Engineering | [.claude/prompt-engineering.md](.claude/prompt-engineering.md) |
 
 ## Key Conventions
 
@@ -97,6 +99,7 @@ docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 - **Validation**: Pydantic `Field` constraints on all mutable schemas (min/max length, ge/le bounds)
 - **Waves**: tasks decomposed into waves by dependency depth; executor dispatches one wave at a time
 - **Context forwarding**: completed task output injected into dependents' `context_json` automatically
+- **Knowledge persistence**: post-completion Haiku extraction of reusable findings (constraints, decisions, gotchas) into `project_knowledge` table; injected into all subsequent tasks' system prompts
 - **Verification**: optional post-completion check via Haiku (PASSED/GAPS_FOUND/HUMAN_NEEDED outcomes)
 - **Checkpoints**: retry-exhausted tasks create structured checkpoints for human resolution
 - **Traceability**: requirements numbered [R1], [R2], mapped to tasks; coverage endpoint shows gaps
