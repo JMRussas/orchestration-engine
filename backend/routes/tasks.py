@@ -342,6 +342,8 @@ async def review_task(
             (TaskStatus.COMPLETED, time.time(), task_id),
         )
     elif body.action == "retry":
+        if row["retry_count"] >= MAX_TASK_RETRIES:
+            raise HTTPException(400, f"Maximum retry limit reached ({MAX_TASK_RETRIES})")
         ctx = json.loads(row["context_json"]) if row["context_json"] else []
         if body.feedback:
             ctx.append({

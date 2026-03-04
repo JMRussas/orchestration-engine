@@ -16,6 +16,11 @@ logger = logging.getLogger("orchestration.model_router")
 _warned_models: set[str] = set()
 
 
+def _reset_warned_models():
+    """Clear the warned-models set. Used by test fixtures to prevent state leak."""
+    _warned_models.clear()
+
+
 # ---------------------------------------------------------------------------
 # Model ID resolution
 # ---------------------------------------------------------------------------

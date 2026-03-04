@@ -219,16 +219,18 @@ async def verify_task_output(
         retry_count = task_row["retry_count"]
         max_retries = task_row["max_retries"]
         if retry_count < max_retries:
-            # Auto-retry with verification feedback appended to context
+            # Auto-retry with verification feedback appended to context.
+            # Sliding window: keep the most recent feedbacks up to the cap.
             ctx = json.loads(task_row["context_json"]) if task_row["context_json"] else []
-            # Cap feedback entries to prevent unbounded context growth
+            non_feedbacks = [e for e in ctx if e.get("type") != "verification_feedback"]
             feedbacks = [e for e in ctx if e.get("type") == "verification_feedback"]
             if len(feedbacks) >= _MAX_VERIFICATION_FEEDBACKS:
-                ctx = [e for e in ctx if e.get("type") != "verification_feedback"]
-            ctx.append({
+                feedbacks = feedbacks[-(_MAX_VERIFICATION_FEEDBACKS - 1):]
+            feedbacks.append({
                 "type": "verification_feedback",
                 "content": f"Previous attempt had gaps: {v_notes}. Address these issues.",
             })
+            ctx = non_feedbacks + feedbacks
             await db.execute_write(
                 "UPDATE tasks SET status = ?, context_json = ?, "
                 "retry_count = retry_count + 1, completed_at = NULL, updated_at = ? WHERE id = ?",
@@ -275,16 +277,19 @@ async def forward_context(*, completed_task, output_text, db):
     }
 
     for dep in deps:
-        dep_task = await db.fetchone(
-            "SELECT context_json FROM tasks WHERE id = ?", (dep["task_id"],),
-        )
-        if dep_task:
-            ctx = json.loads(dep_task["context_json"]) if dep_task["context_json"] else []
-            ctx.append(context_entry)
-            await db.execute_write(
-                "UPDATE tasks SET context_json = ?, updated_at = ? WHERE id = ?",
-                (json.dumps(ctx), time.time(), dep["task_id"]),
+        # Wrap each read-modify-write in a transaction to prevent
+        # concurrent upstream completions from clobbering each other.
+        async with db.transaction():
+            dep_task = await db.fetchone(
+                "SELECT context_json FROM tasks WHERE id = ?", (dep["task_id"],),
             )
+            if dep_task:
+                ctx = json.loads(dep_task["context_json"]) if dep_task["context_json"] else []
+                ctx.append(context_entry)
+                await db.execute_write(
+                    "UPDATE tasks SET context_json = ?, updated_at = ? WHERE id = ?",
+                    (json.dumps(ctx), time.time(), dep["task_id"]),
+                )
 
 
 async def execute_task(

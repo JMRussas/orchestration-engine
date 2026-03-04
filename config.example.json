@@ -78,7 +78,9 @@
     "knowledge_extraction_model": "claude-haiku-4-5-20251001",
     "knowledge_extraction_max_tokens": 1024,
     "knowledge_injection_max_chars": 3000,
-    "knowledge_min_output_length": 200
+    "knowledge_min_output_length": 200,
+    "max_history_rounds": 4,
+    "http_client_timeout": 300.0
   },
   "model_pricing": {
     "claude-haiku-4-5-20251001": { "input_per_mtok": 1.0, "output_per_mtok": 5.0 },
