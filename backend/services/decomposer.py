@@ -6,6 +6,7 @@
 #  Used by:    routes/projects.py, container.py
 
 import json
+import logging
 import time
 import uuid
 
@@ -13,6 +14,8 @@ from backend.config import DEFAULT_MAX_TOKENS
 from backend.exceptions import CycleDetectedError, InvalidStateError, NotFoundError
 from backend.models.enums import PlanStatus, ProjectStatus, TaskStatus
 from backend.services.model_router import estimate_task_cost, recommend_tier, recommend_tools
+
+logger = logging.getLogger("orchestration.decomposer")
 
 # Token estimate for budget estimation during decomposition
 _EST_DECOMPOSE_INPUT_TOKENS = 1500  # system prompt + context + tools
@@ -155,11 +158,28 @@ class DecomposerService:
             for dep_raw in depends_on_indices:
                 # Claude may return indices as strings or ints
                 dep_idx = int(dep_raw) if isinstance(dep_raw, str) and dep_raw.isdigit() else dep_raw
-                if isinstance(dep_idx, int) and 0 <= dep_idx < len(task_ids) and dep_idx != i:
-                    write_statements.append((
-                        "INSERT INTO task_deps (task_id, depends_on) VALUES (?, ?)",
-                        (task_ids[i], task_ids[dep_idx]),
-                    ))
+                if not isinstance(dep_idx, int):
+                    logger.warning(
+                        "Task %d ('%s'): dropping non-numeric dependency: %r",
+                        i, task_def.get("title", ""), dep_raw,
+                    )
+                    continue
+                if dep_idx == i:
+                    logger.warning(
+                        "Task %d ('%s'): dropping self-referencing dependency",
+                        i, task_def.get("title", ""),
+                    )
+                    continue
+                if dep_idx < 0 or dep_idx >= len(task_ids):
+                    logger.warning(
+                        "Task %d ('%s'): dropping out-of-range dependency index %d (valid: 0-%d)",
+                        i, task_def.get("title", ""), dep_idx, len(task_ids) - 1,
+                    )
+                    continue
+                write_statements.append((
+                    "INSERT INTO task_deps (task_id, depends_on) VALUES (?, ?)",
+                    (task_ids[i], task_ids[dep_idx]),
+                ))
 
         # Mark plan as approved
         write_statements.append((

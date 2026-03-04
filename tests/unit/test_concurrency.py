@@ -504,9 +504,8 @@ class TestSharedHttpClient:
 
     def test_container_provides_http_client(self):
         """DI container should wire httpx.AsyncClient to executor and registry."""
-        from backend.container import Container
+        from backend.app import container
 
-        container = Container()
         try:
             client = container.http_client()
             assert client is not None

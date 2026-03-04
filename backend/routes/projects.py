@@ -17,11 +17,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from backend.container import Container
 from backend.db.connection import Database
 from backend.exceptions import (
-    BudgetExhaustedError,
     CycleDetectedError,
     NotFoundError,
     OrchestrationError,
-    PlanParseError,
 )
 from backend.rate_limit import limiter
 from backend.middleware.auth import get_current_user
@@ -87,8 +85,8 @@ async def _get_owned_project(db: Database, project_id: str, user: dict):
     row = await db.fetchone("SELECT * FROM projects WHERE id = ?", (project_id,))
     if not row:
         raise HTTPException(404, f"Project {project_id} not found")
-    # Admins can access all; NULL owner_id treated as admin-owned (legacy data)
-    if user.get("role") != "admin" and row["owner_id"] is not None and row["owner_id"] != user["id"]:
+    # Admins can access all; NULL owner_id is admin-only (no owner = no access for regular users)
+    if user.get("role") != "admin" and row["owner_id"] != user["id"]:
         raise HTTPException(403, "You do not own this project")
     return row
 
@@ -265,19 +263,13 @@ async def trigger_plan(
     planner: PlannerService = Depends(Provide[Container.planner]),
 ):
     """Generate a plan from the project's requirements using Claude."""
-    await _get_owned_project(db, project_id, current_user)
+    row = await _get_owned_project(db, project_id, current_user)
 
-    try:
-        result = await planner.generate(project_id)
-    except NotFoundError as e:
-        raise HTTPException(404, str(e))
-    except BudgetExhaustedError as e:
-        raise HTTPException(402, str(e))
-    except PlanParseError as e:
-        raise HTTPException(422, str(e))
-    except OrchestrationError as e:
-        raise HTTPException(400, str(e))
+    # Reject planning for projects in terminal or active states
+    if row["status"] in (ProjectStatus.EXECUTING, ProjectStatus.COMPLETED, ProjectStatus.CANCELLED):
+        raise HTTPException(400, f"Cannot plan a project in '{row['status']}' state")
 
+    result = await planner.generate(project_id)
     return result
 
 

@@ -27,7 +27,10 @@ from backend.tools.registry import ToolRegistry
 class Container(containers.DeclarativeContainer):
     """DI container for the Orchestration Engine.
 
-    All services are Singletons — one instance per application lifecycle.
+    Most services are Singletons — one instance per application lifecycle.
+    Exceptions: git_service, planner, and decomposer use Factory providers
+    (new instance per injection) since they hold per-request state.
+
     Routes access them via @inject + Depends(Provide[Container.xxx]).
     Tests override them via container.xxx.override(providers.Object(mock)).
     """

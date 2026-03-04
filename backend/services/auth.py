@@ -7,6 +7,7 @@
 #  Depends on: backend/db/connection.py, backend/config.py
 #  Used by:    container.py, routes/auth.py, routes/events.py, middleware/auth.py
 
+import hashlib
 import logging
 import time
 import uuid
@@ -72,16 +73,25 @@ class AuthService:
         return jwt.encode(payload, AUTH_SECRET_KEY, algorithm=AUTH_ALGORITHM)
 
     @staticmethod
-    def create_refresh_token(user_id: str) -> str:
+    def create_refresh_token(user_id: str, family_id: str | None = None) -> tuple[str, str]:
+        """Create a refresh token with family tracking.
+
+        Returns (token, family_id). The family_id groups related refresh tokens
+        so an entire lineage can be revoked if reuse is detected.
+        """
+        fid = family_id or uuid.uuid4().hex
         expire = datetime.now(timezone.utc) + timedelta(
             days=AUTH_REFRESH_TOKEN_EXPIRE_DAYS
         )
         payload = {
             "sub": user_id,
             "type": "refresh",
+            "fid": fid,
+            "jti": uuid.uuid4().hex,
             "exp": expire,
         }
-        return jwt.encode(payload, AUTH_SECRET_KEY, algorithm=AUTH_ALGORITHM)
+        token = jwt.encode(payload, AUTH_SECRET_KEY, algorithm=AUTH_ALGORITHM)
+        return token, fid
 
     @staticmethod
     def create_sse_token(user_id: str, project_id: str) -> str:
@@ -101,6 +111,30 @@ class AuthService:
     def decode_token(token: str) -> dict:
         """Decode and validate a JWT. Raises jwt.PyJWTError on failure."""
         return jwt.decode(token, AUTH_SECRET_KEY, algorithms=[AUTH_ALGORITHM])
+
+    @staticmethod
+    def _hash_token(token: str) -> str:
+        """SHA-256 hash of a token for DB storage (never store raw tokens)."""
+        return hashlib.sha256(token.encode()).hexdigest()
+
+    async def _store_refresh_token(
+        self, user_id: str, family_id: str, token: str, expires_at: float
+    ) -> None:
+        """Store a refresh token record for family tracking."""
+        token_hash = self._hash_token(token)
+        await self._db.execute_write(
+            "INSERT INTO refresh_token_families "
+            "(id, user_id, family_id, token_hash, is_revoked, created_at, expires_at) "
+            "VALUES (?, ?, ?, ?, 0, ?, ?)",
+            (uuid.uuid4().hex, user_id, family_id, token_hash, time.time(), expires_at),
+        )
+
+    async def _revoke_family(self, family_id: str) -> None:
+        """Revoke all tokens in a family (reuse detected)."""
+        await self._db.execute_write(
+            "UPDATE refresh_token_families SET is_revoked = 1 WHERE family_id = ?",
+            (family_id,),
+        )
 
     # ------------------------------------------------------------------
     # Registration
@@ -243,7 +277,11 @@ class AuthService:
         )
 
         access_token = self.create_access_token(user["id"], user["role"])
-        refresh_token = self.create_refresh_token(user["id"])
+        refresh_token, family_id = self.create_refresh_token(user["id"])
+
+        # Store refresh token for family tracking
+        expire_ts = time.time() + (AUTH_REFRESH_TOKEN_EXPIRE_DAYS * 86400)
+        await self._store_refresh_token(user["id"], family_id, refresh_token, expire_ts)
 
         return {
             "access_token": access_token,
@@ -262,7 +300,15 @@ class AuthService:
     # ------------------------------------------------------------------
 
     async def refresh_tokens(self, refresh_token: str) -> dict:
-        """Issue new access + refresh tokens from a valid refresh token."""
+        """Issue new access + refresh tokens from a valid refresh token.
+
+        Implements token family tracking:
+        - Each refresh token belongs to a family (started at login).
+        - On refresh, the old token is consumed (marked revoked) and a new one
+          is issued in the same family.
+        - If a consumed token is reused, the entire family is revoked (theft detection).
+        - Legacy tokens (no `fid` claim) are accepted with a new family (graceful migration).
+        """
         try:
             payload = self.decode_token(refresh_token)
         except jwt.PyJWTError as e:
@@ -278,8 +324,63 @@ class AuthService:
         if not user:
             raise ValueError("User not found or disabled")
 
+        family_id = payload.get("fid")
+        token_hash = self._hash_token(refresh_token)
+
+        if family_id:
+            # Atomic read-check-consume inside a transaction to prevent TOCTOU:
+            # two concurrent refresh requests for the same token must not both succeed.
+            # BEGIN IMMEDIATE serializes writers, so the second request will see
+            # is_revoked=1 after the first commits.
+            #
+            # Revocation on reuse/compromise is done inside the transaction so it
+            # commits before we raise. (transaction() rolls back on exception, so
+            # we must NOT raise inside the block — instead set an error to raise after.)
+            _refresh_error: str | None = None
+
+            async with self._db.transaction():
+                record = await self._db.fetchone(
+                    "SELECT * FROM refresh_token_families WHERE token_hash = ?",
+                    (token_hash,),
+                )
+
+                if not record:
+                    # Token hash not in DB but has a family ID — reuse of a consumed token.
+                    logger.warning(
+                        "Refresh token reuse detected for family %s, user %s — revoking family",
+                        family_id, user_id,
+                    )
+                    await self._revoke_family(family_id)
+                    _refresh_error = "Token reuse detected — all sessions revoked. Please log in again."
+                elif record["is_revoked"]:
+                    # Token was already revoked — family compromise.
+                    logger.warning(
+                        "Revoked refresh token used for family %s, user %s — revoking family",
+                        family_id, user_id,
+                    )
+                    await self._revoke_family(family_id)
+                    _refresh_error = "Token has been revoked — all sessions revoked. Please log in again."
+                else:
+                    # Valid token — consume it (mark as revoked so it can't be reused)
+                    await self._db.execute_write(
+                        "UPDATE refresh_token_families SET is_revoked = 1 WHERE id = ?",
+                        (record["id"],),
+                    )
+
+            # Raise AFTER transaction commits, so revocation is persisted
+            if _refresh_error:
+                raise ValueError(_refresh_error)
+        else:
+            # Legacy token (no fid) — accept gracefully, start a new family
+            family_id = None
+            logger.debug("Legacy refresh token for user %s — creating new family", user_id)
+
+        # Issue new tokens in the same family (or a new one for legacy tokens)
         access_token = self.create_access_token(user["id"], user["role"])
-        new_refresh = self.create_refresh_token(user["id"])
+        new_refresh, new_family_id = self.create_refresh_token(user["id"], family_id=family_id)
+
+        expire_ts = time.time() + (AUTH_REFRESH_TOKEN_EXPIRE_DAYS * 86400)
+        await self._store_refresh_token(user["id"], new_family_id, new_refresh, expire_ts)
 
         return {
             "access_token": access_token,
@@ -310,8 +411,38 @@ class AuthService:
         user["linked_providers"] = [r["provider"] for r in identities]
         return user
 
-    async def set_password(self, user_id: str, new_password: str) -> None:
-        """Set or change a user's password."""
+    # ------------------------------------------------------------------
+    # Token management
+    # ------------------------------------------------------------------
+
+    async def revoke_user_tokens(self, user_id: str) -> int:
+        """Revoke all refresh token families for a user. Returns count of revoked records."""
+        cursor = await self._db.execute_write(
+            "UPDATE refresh_token_families SET is_revoked = 1 "
+            "WHERE user_id = ? AND is_revoked = 0",
+            (user_id,),
+        )
+        return cursor.rowcount
+
+    async def cleanup_expired_tokens(self) -> int:
+        """Delete expired refresh token records. Returns count of deleted records."""
+        cursor = await self._db.execute_write(
+            "DELETE FROM refresh_token_families WHERE expires_at < ?",
+            (time.time(),),
+        )
+        return cursor.rowcount
+
+    # ------------------------------------------------------------------
+    # Password management
+    # ------------------------------------------------------------------
+
+    async def set_password(self, user_id: str, new_password: str, caller_id: str | None = None) -> None:
+        """Set or change a user's password.
+
+        If caller_id is provided, it must match user_id (users can only change their own password).
+        """
+        if caller_id is not None and caller_id != user_id:
+            raise PermissionError("Cannot change another user's password")
         password_hash = self.hash_password(new_password)
         await self._db.execute_write(
             "UPDATE users SET password_hash = ? WHERE id = ?",

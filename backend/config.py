@@ -175,6 +175,19 @@ def validate_config():
             "(must be at least 32 characters)"
         )
 
+    # Fatal: reject known placeholder secret keys
+    _KNOWN_PLACEHOLDERS = {
+        "CHANGE-ME-generate-a-random-64-char-string-here",
+        "change-me",
+        "secret",
+        "your-secret-key-here",
+    }
+    if AUTH_SECRET_KEY in _KNOWN_PLACEHOLDERS:
+        raise ConfigError(
+            "FATAL: auth.secret_key is still a placeholder value. "
+            "Generate a unique random key (e.g. `python -c \"import secrets; print(secrets.token_hex(32))\"`)"
+        )
+
     # Fatal: port must be valid
     if not isinstance(PORT, int) or not (1 <= PORT <= 65535):
         raise ConfigError(f"server.port must be 1-65535, got {PORT}")

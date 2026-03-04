@@ -23,7 +23,7 @@ logger = logging.getLogger("orchestration.auth")
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 
-async def _validate_token(auth: AuthService, raw_token: str, expected_type: str = "access") -> dict:
+async def _validate_token(auth: AuthService, raw_token: str, expected_type: str = "access") -> tuple[dict, dict]:
     """Decode a JWT, check its type, and return the active user.
 
     Shared logic for Bearer header auth and SSE query-param auth.
@@ -89,22 +89,10 @@ async def get_user_from_sse_token(
 ) -> dict:
     """Validate a short-lived SSE token scoped to a single project.
 
-    Only accepts type="sse" tokens and verifies the project_id claim
-    matches the route parameter.
+    Decodes the token once via _validate_token (type="sse"),
+    then verifies the project_id claim matches the route parameter.
     """
-    try:
-        payload = auth.decode_token(token)
-    except jwt.PyJWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-        )
-
-    if payload.get("type") != "sse":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token type — SSE token required",
-        )
+    user, payload = await _validate_token(auth, token, "sse")
 
     if payload.get("project_id") != project_id:
         raise HTTPException(
@@ -112,5 +100,4 @@ async def get_user_from_sse_token(
             detail="SSE token not valid for this project",
         )
 
-    user, _ = await _validate_token(auth, token, "sse")
     return user

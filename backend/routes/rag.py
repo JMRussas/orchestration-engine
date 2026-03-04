@@ -32,7 +32,7 @@ async def list_databases(
         exists = os.path.isfile(path)
         info = RAGDatabaseInfo(
             name=name,
-            path=path,
+            path=name,  # Expose name only, not filesystem path
             exists=exists,
         )
 
@@ -146,7 +146,7 @@ async def list_documents(
                     id=r["id"],
                     source=r["source"] or "",
                     type_name=r["type_name"],
-                    file_path=r["file_path"],
+                    file_path=os.path.basename(r["file_path"]) if r["file_path"] else None,
                     text_preview=text[:200],
                 ))
             return total, items

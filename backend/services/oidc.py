@@ -14,7 +14,7 @@ import uuid
 
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 
-from backend.config import AUTH_OIDC_PROVIDERS, AUTH_OIDC_REDIRECT_URIS
+from backend.config import AUTH_OIDC_PROVIDERS, AUTH_OIDC_REDIRECT_URIS, AUTH_REFRESH_TOKEN_EXPIRE_DAYS
 from backend.db.connection import Database
 from backend.exceptions import AccountLinkError, NotFoundError, OIDCError
 from backend.services.auth import AuthService
@@ -203,7 +203,11 @@ class OIDCService:
             raise OIDCError("Account is deactivated")
 
         access_token = self._auth.create_access_token(user["id"], user["role"])
-        refresh_token = self._auth.create_refresh_token(user["id"])
+        refresh_token, family_id = self._auth.create_refresh_token(user["id"])
+
+        # Store refresh token for family tracking
+        expire_ts = time.time() + (AUTH_REFRESH_TOKEN_EXPIRE_DAYS * 86400)
+        await self._auth._store_refresh_token(user["id"], family_id, refresh_token, expire_ts)
 
         return {
             "access_token": access_token,
