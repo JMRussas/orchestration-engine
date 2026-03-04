@@ -5,7 +5,9 @@
 #  Depends on: models/enums.py
 #  Used by:    routes/*
 
-from pydantic import BaseModel, EmailStr, Field
+import os
+
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from backend.models.enums import (
     ModelTier,
@@ -22,6 +24,18 @@ from backend.models.enums import (
 # Projects
 # ---------------------------------------------------------------------------
 
+def _validate_repo_path(v: str | None) -> str | None:
+    """Validate repo_path: must be absolute, no traversal components."""
+    if v is None:
+        return v
+    normalized = os.path.normpath(v)
+    if not os.path.isabs(normalized):
+        raise ValueError("repo_path must be an absolute path")
+    if ".." in normalized.split(os.sep):
+        raise ValueError("repo_path must not contain '..' components")
+    return normalized
+
+
 class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     requirements: str = Field(..., min_length=1, max_length=50_000)
@@ -29,6 +43,11 @@ class ProjectCreate(BaseModel):
     planning_rigor: PlanningRigor = PlanningRigor.L2
     repo_path: str | None = None
     git_base_branch: str | None = None
+
+    @field_validator("repo_path")
+    @classmethod
+    def check_repo_path(cls, v):
+        return _validate_repo_path(v)
 
 
 class ProjectUpdate(BaseModel):
@@ -38,6 +57,11 @@ class ProjectUpdate(BaseModel):
     planning_rigor: PlanningRigor | None = None
     repo_path: str | None = None
     git_base_branch: str | None = None
+
+    @field_validator("repo_path")
+    @classmethod
+    def check_repo_path(cls, v):
+        return _validate_repo_path(v)
 
 
 class ProjectOut(BaseModel):
@@ -214,8 +238,8 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: str
-    password: str
+    email: EmailStr
+    password: str = Field(..., max_length=128)
 
 
 class RefreshRequest(BaseModel):

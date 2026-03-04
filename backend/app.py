@@ -12,7 +12,6 @@ from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -24,6 +23,7 @@ from backend.exceptions import (
     AccountLinkError,
     BudgetExhaustedError,
     CycleDetectedError,
+    GitError,
     InvalidStateError,
     NotFoundError,
     OIDCError,
@@ -143,6 +143,11 @@ async def account_link_handler(request: Request, exc: AccountLinkError):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
+@app.exception_handler(GitError)
+async def git_error_handler(request: Request, exc: GitError):
+    return JSONResponse(status_code=502, content={"detail": str(exc)})
+
+
 @app.exception_handler(OrchestrationError)
 async def orchestration_handler(request: Request, exc: OrchestrationError):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
@@ -154,32 +159,70 @@ async def unhandled_handler(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
-# Request ID tracing
-class RequestIDMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
+# Raw ASGI middleware — avoids BaseHTTPMiddleware's response-buffering
+# behavior that breaks SSE streaming.
+
+class RequestIDMiddleware:
+    """Inject X-Request-ID header and set contextvars request ID."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
         rid = uuid.uuid4().hex[:12]
         set_request_id(rid)
+
+        async def send_with_rid(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                headers.append((b"x-request-id", rid.encode()))
+                message = {**message, "headers": headers}
+            await send(message)
+
         try:
-            response = await call_next(request)
-            response.headers["X-Request-ID"] = rid
-            return response
+            await self.app(scope, receive, send_with_rid)
         finally:
             set_request_id(None)
 
+
+class SecurityHeadersMiddleware:
+    """Inject security headers on all HTTP responses.
+
+    CSP intentionally omitted: Vite build includes an inline theme-detection
+    script that script-src 'self' would block.
+    """
+
+    _HEADERS = [
+        (b"x-content-type-options", b"nosniff"),
+        (b"referrer-policy", b"no-referrer"),
+        (b"x-frame-options", b"DENY"),
+    ]
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                existing_names = {h[0] for h in headers}
+                for name, value in self._HEADERS:
+                    if name not in existing_names:
+                        headers.append((name, value))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
 app.add_middleware(RequestIDMiddleware)
-
-
-# Security headers on all responses. CSP intentionally omitted: Vite build
-# includes an inline theme-detection script that script-src 'self' would block.
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-        response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("Referrer-Policy", "no-referrer")
-        response.headers.setdefault("X-Frame-Options", "DENY")
-        return response
-
-
 app.add_middleware(SecurityHeadersMiddleware)
 
 # CORS

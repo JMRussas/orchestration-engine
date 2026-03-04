@@ -165,6 +165,17 @@ checkpoints = Table(
     Column("created_at", Float, nullable=False),
 )
 
+refresh_token_families = Table(
+    "refresh_token_families",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("family_id", Text, nullable=False),
+    Column("token_hash", Text, nullable=False),
+    Column("is_revoked", Integer, server_default="0"),
+    Column("created_at", Float, nullable=False),
+    Column("expires_at", Float, nullable=False),
+)
 user_identities = Table(
     "user_identities",
     metadata,
@@ -212,5 +223,8 @@ Index("idx_tasks_project_wave", tasks.c.project_id, tasks.c.wave)
 Index("idx_events_project_task", task_events.c.project_id, task_events.c.task_id)
 Index("idx_deps_task_id", task_deps.c.task_id)
 Index("idx_usage_project_timestamp", usage_log.c.project_id, usage_log.c.timestamp)
+Index("idx_rtf_token_hash", refresh_token_families.c.token_hash, unique=True)
+Index("idx_rtf_family_id", refresh_token_families.c.family_id)
+Index("idx_rtf_user_id", refresh_token_families.c.user_id)
 Index("idx_knowledge_project", project_knowledge.c.project_id)
 Index("idx_knowledge_dedup", project_knowledge.c.project_id, project_knowledge.c.content_hash, unique=True)

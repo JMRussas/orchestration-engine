@@ -145,7 +145,7 @@ class TestGetUserFromSseToken:
         auth = AuthService(db=tmp_db)
         user, user_id = await _make_user(auth)
 
-        refresh_token = AuthService.create_refresh_token(user_id)
+        refresh_token, _ = AuthService.create_refresh_token(user_id)
         with pytest.raises(HTTPException) as exc_info:
             await get_user_from_sse_token(
                 project_id="proj_001", token=refresh_token, auth=auth
@@ -164,4 +164,4 @@ class TestGetUserFromSseToken:
                 project_id="proj_001", token=access_token, auth=auth
             )
         assert exc_info.value.status_code == 401
-        assert "SSE token required" in exc_info.value.detail
+        assert "Invalid token type" in exc_info.value.detail

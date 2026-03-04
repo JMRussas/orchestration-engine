@@ -203,7 +203,13 @@ class OIDCService:
             raise OIDCError("Account is deactivated")
 
         access_token = self._auth.create_access_token(user["id"], user["role"])
-        refresh_token = self._auth.create_refresh_token(user["id"])
+        refresh_token, family_id = self._auth.create_refresh_token(user["id"])
+
+        # Store refresh token for family tracking
+        import time as _time
+        from backend.config import AUTH_REFRESH_TOKEN_EXPIRE_DAYS
+        expire_ts = _time.time() + (AUTH_REFRESH_TOKEN_EXPIRE_DAYS * 86400)
+        await self._auth._store_refresh_token(user["id"], family_id, refresh_token, expire_ts)
 
         return {
             "access_token": access_token,

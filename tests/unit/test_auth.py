@@ -39,10 +39,11 @@ class TestJWT:
         assert payload["type"] == "access"
 
     def test_refresh_token_roundtrip(self):
-        token = AuthService.create_refresh_token("user456")
+        token, family_id = AuthService.create_refresh_token("user456")
         payload = AuthService.decode_token(token)
         assert payload["sub"] == "user456"
         assert payload["type"] == "refresh"
+        assert payload["fid"] == family_id
 
     def test_expired_token_raises(self):
         with patch("backend.services.auth.AUTH_ACCESS_TOKEN_EXPIRE_MINUTES", -1):

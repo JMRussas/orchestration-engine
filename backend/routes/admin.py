@@ -83,6 +83,16 @@ async def update_user(
         if body.role and body.role != "admin":
             raise HTTPException(400, "Cannot change your own role")
 
+    # Last-admin protection: prevent removing the final active admin
+    is_demoting_admin = (body.role is not None and body.role != "admin" and row["role"] == "admin")
+    is_deactivating_admin = (body.is_active is False and row["role"] == "admin")
+    if is_demoting_admin or is_deactivating_admin:
+        count = await db.fetchone(
+            "SELECT COUNT(*) as cnt FROM users WHERE role = 'admin' AND is_active = 1"
+        )
+        if count["cnt"] <= 1:
+            raise HTTPException(400, "Cannot remove the last active admin")
+
     updates = []
     params = []
     if body.role is not None:

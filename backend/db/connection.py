@@ -170,6 +170,23 @@ CREATE TABLE IF NOT EXISTS project_knowledge (
     created_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS refresh_token_families (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    family_id TEXT NOT NULL,
+    token_hash TEXT NOT NULL,
+    is_revoked INTEGER DEFAULT 0,
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rtf_token_hash
+    ON refresh_token_families(token_hash);
+CREATE INDEX IF NOT EXISTS idx_rtf_family_id
+    ON refresh_token_families(family_id);
+CREATE INDEX IF NOT EXISTS idx_rtf_user_id
+    ON refresh_token_families(user_id);
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_identities_provider_uid
     ON user_identities(provider, provider_user_id);
 CREATE INDEX IF NOT EXISTS idx_identities_user ON user_identities(user_id);

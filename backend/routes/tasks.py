@@ -32,7 +32,7 @@ async def _verify_task_ownership(db: Database, task_id: str, user: dict):
     if not row:
         raise HTTPException(404, f"Task {task_id} not found")
     project = await db.fetchone("SELECT owner_id FROM projects WHERE id = ?", (row["project_id"],))
-    if project and user.get("role") != "admin" and project["owner_id"] is not None and project["owner_id"] != user["id"]:
+    if project and user.get("role") != "admin" and project["owner_id"] != user["id"]:
         raise HTTPException(403, "You do not own this task's project")
     return row
 

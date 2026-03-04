@@ -181,7 +181,9 @@ async def run_claude_task(
                     try:
                         result = await tool.execute(tool_input)
                     except Exception as e:
-                        result = f"Tool error: {e}"
+                        # Sanitize error — don't leak internal paths or stack traces
+                        result = f"Tool error: {type(e).__name__}: operation failed"
+                        logger.debug("Tool %s error detail: %s", tool_name, e)
                 else:
                     result = f"Unknown tool: {tool_name}"
 
