@@ -25,20 +25,24 @@ export function useFetch<T>(
   const fetchRef = useRef(fetchFn)
   fetchRef.current = fetchFn
 
+  const cancelledRef = useRef(false)
+
   const doFetch = useCallback(async () => {
+    cancelledRef.current = false
     setLoading(true)
     setError(null)
     try {
       const result = await fetchRef.current()
-      setData(result)
+      if (!cancelledRef.current) setData(result)
     } catch (e) {
-      setError(String(e))
+      if (!cancelledRef.current) setError(String(e))
     }
-    setLoading(false)
+    if (!cancelledRef.current) setLoading(false)
   }, [])
 
   useEffect(() => {
     doFetch()
+    return () => { cancelledRef.current = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps)
 

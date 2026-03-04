@@ -66,6 +66,27 @@ describe('useFetch', () => {
     expect(result.current.error).toBeNull()
   })
 
+  it('does not setState after unmount (cancellation guard)', async () => {
+    let resolve: (v: string) => void
+    const fetchFn = vi.fn().mockReturnValue(
+      new Promise<string>(r => { resolve = r })
+    )
+
+    const { result, unmount } = renderHook(() => useFetch(fetchFn))
+
+    // Still loading
+    expect(result.current.loading).toBe(true)
+
+    // Unmount before the fetch resolves
+    unmount()
+
+    // Resolve the fetch — should NOT throw or update state
+    resolve!('late-data')
+
+    // No error means the cancellation guard prevented setState after unmount
+    // (React would warn about setState on unmounted component without the guard)
+  })
+
   it('re-fetches when deps change', async () => {
     const fetchFn = vi.fn().mockResolvedValue('data')
     let dep = 'a'

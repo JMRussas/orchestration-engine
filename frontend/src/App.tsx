@@ -1,12 +1,13 @@
 // Orchestration Engine - App Router
 //
-// Depends on: hooks/useAuth.tsx, components/AuthGuard.tsx, components/Layout.tsx,
-//             components/ErrorBoundary.tsx
+// Depends on: hooks/useAuth.tsx, components/AuthGuard.tsx, components/RequireRole.tsx,
+//             components/Layout.tsx, components/ErrorBoundary.tsx
 // Used by:    main.tsx
 
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { AuthProvider } from './hooks/useAuth'
 import AuthGuard from './components/AuthGuard'
+import RequireRole from './components/RequireRole'
 import ErrorBoundary from './components/ErrorBoundary'
 import Layout from './components/Layout'
 import Login from './pages/Login'
@@ -41,9 +42,12 @@ export default function App() {
                 <Route path="/project/:id/task/:taskId" element={<TaskDetail />} />
                 <Route path="/usage" element={<Usage />} />
                 <Route path="/services" element={<Services />} />
-                <Route path="/admin" element={<Admin />} />
-                <Route path="/analytics" element={<Analytics />} />
                 <Route path="/rag" element={<RAG />} />
+                {/* Admin-only routes */}
+                <Route element={<RequireRole role="admin" />}>
+                  <Route path="/admin" element={<Admin />} />
+                  <Route path="/analytics" element={<Analytics />} />
+                </Route>
               </Route>
             </Route>
 
