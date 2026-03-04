@@ -6,13 +6,12 @@
 #  Used by:    CI pipeline
 
 import hashlib
-import json
 import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from tests.conftest import create_test_project, create_test_task
+from tests.conftest import create_test_project
 
 
 def _make_task_row(project_id="proj1", task_id="task1"):
@@ -97,7 +96,6 @@ class TestKnowledgeInjection:
     async def test_knowledge_injection_respects_max_chars(self, tmp_db):
         """Total injected knowledge is capped at KNOWLEDGE_INJECTION_MAX_CHARS."""
         from backend.services.claude_agent import run_claude_task
-        from backend.config import KNOWLEDGE_INJECTION_MAX_CHARS
 
         await create_test_project(tmp_db, "proj1")
         # Seed many large entries that exceed the cap
