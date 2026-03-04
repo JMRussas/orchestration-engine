@@ -127,7 +127,7 @@ async def create_project(
 @inject
 async def list_projects(
     status: ProjectStatus | None = None,
-    limit: int = Query(default=50, le=200),
+    limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     current_user: dict = Depends(get_current_user),
     db: Database = Depends(Provide[Container.db]),
@@ -285,7 +285,7 @@ async def trigger_plan(
 @inject
 async def list_plans(
     project_id: str,
-    limit: int = Query(default=20, le=100),
+    limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     current_user: dict = Depends(get_current_user),
     db: Database = Depends(Provide[Container.db]),
@@ -659,7 +659,7 @@ async def get_coverage(
 async def list_knowledge(
     project_id: str,
     category: str | None = None,
-    limit: int = Query(default=50, le=200),
+    limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     current_user: dict = Depends(get_current_user),
     db: Database = Depends(Provide[Container.db]),

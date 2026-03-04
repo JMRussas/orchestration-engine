@@ -79,7 +79,7 @@ async def get_daily_usage(
 @router.get("/by-project")
 @inject
 async def get_usage_by_project(
-    limit: int = Query(default=50, le=200),
+    limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     current_user: dict = Depends(get_current_user),
     db: Database = Depends(Provide[Container.db]),

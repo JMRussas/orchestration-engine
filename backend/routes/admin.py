@@ -23,7 +23,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 @router.get("/users")
 @inject
 async def list_users(
-    limit: int = Query(default=50, le=200),
+    limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     _admin: dict = Depends(require_admin),
     db: Database = Depends(Provide[Container.db]),

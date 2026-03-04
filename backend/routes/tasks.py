@@ -165,7 +165,7 @@ async def list_tasks(
     sort: TaskSortField = TaskSortField.PRIORITY,
     sort_dir: str = Query(default="asc", pattern="^(asc|desc)$"),
     exclude_output: bool = False,
-    limit: int = Query(default=100, le=500),
+    limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     current_user: dict = Depends(get_current_user),
     db: Database = Depends(Provide[Container.db]),
