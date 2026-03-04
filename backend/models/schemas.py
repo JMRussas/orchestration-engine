@@ -28,11 +28,13 @@ def _validate_repo_path(v: str | None) -> str | None:
     """Validate repo_path: must be absolute, no traversal components."""
     if v is None:
         return v
+    # Check for '..' on raw input BEFORE normpath resolves it away
+    raw_parts = v.replace("\\", "/").split("/")
+    if ".." in raw_parts:
+        raise ValueError("repo_path must not contain '..' components")
     normalized = os.path.normpath(v)
     if not os.path.isabs(normalized):
         raise ValueError("repo_path must be an absolute path")
-    if ".." in normalized.split(os.sep):
-        raise ValueError("repo_path must not contain '..' components")
     return normalized
 
 
