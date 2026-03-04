@@ -16,3 +16,8 @@ frontend/dist/
 .claude/
 *.log
 *.db-journal
+tests/
+*.md
+!requirements.txt
+.worktrees/
+.ruff_cache/

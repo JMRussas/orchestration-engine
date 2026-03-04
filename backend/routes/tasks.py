@@ -165,6 +165,8 @@ async def list_tasks(
     sort: TaskSortField = TaskSortField.PRIORITY,
     sort_dir: str = Query(default="asc", pattern="^(asc|desc)$"),
     exclude_output: bool = False,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     current_user: dict = Depends(get_current_user),
     db: Database = Depends(Provide[Container.db]),
 ) -> list[TaskOut]:
@@ -197,6 +199,8 @@ async def list_tasks(
     direction = "ASC" if sort_dir == "asc" else "DESC"
     secondary = ", created_at ASC" if sort_column != "created_at" else ""
     query += f" ORDER BY {sort_column} {direction}{secondary}"
+    query += " LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
 
     rows = await db.fetchall(query, params)
     tasks = [TaskOut(**d) for d in await _rows_to_tasks(rows, db)]

@@ -103,8 +103,6 @@ tasks = Table(
     Column("updated_at", Float, nullable=False),
     Column("git_branch", Text),
     Column("git_commit_sha", Text),
-    Column("claimed_by", Text),
-    Column("claimed_at", Float),
 )
 
 task_deps = Table(
@@ -167,19 +165,6 @@ checkpoints = Table(
     Column("created_at", Float, nullable=False),
 )
 
-api_keys = Table(
-    "api_keys",
-    metadata,
-    Column("id", Text, primary_key=True),
-    Column("key_hash", Text, nullable=False, unique=True),
-    Column("key_prefix", Text, nullable=False),
-    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
-    Column("name", Text, nullable=False),
-    Column("is_active", Integer, nullable=False, server_default="1"),
-    Column("created_at", Float, nullable=False),
-    Column("last_used_at", Float),
-)
-
 user_identities = Table(
     "user_identities",
     metadata,
@@ -227,7 +212,5 @@ Index("idx_tasks_project_wave", tasks.c.project_id, tasks.c.wave)
 Index("idx_events_project_task", task_events.c.project_id, task_events.c.task_id)
 Index("idx_deps_task_id", task_deps.c.task_id)
 Index("idx_usage_project_timestamp", usage_log.c.project_id, usage_log.c.timestamp)
-Index("idx_api_keys_hash", api_keys.c.key_hash)
-Index("idx_api_keys_user", api_keys.c.user_id)
 Index("idx_knowledge_project", project_knowledge.c.project_id)
 Index("idx_knowledge_dedup", project_knowledge.c.project_id, project_knowledge.c.content_hash, unique=True)
