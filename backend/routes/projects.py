@@ -285,6 +285,8 @@ async def trigger_plan(
 @inject
 async def list_plans(
     project_id: str,
+    limit: int = Query(default=20, le=100),
+    offset: int = Query(default=0, ge=0),
     current_user: dict = Depends(get_current_user),
     db: Database = Depends(Provide[Container.db]),
 ) -> list[PlanOut]:
@@ -292,8 +294,8 @@ async def list_plans(
     await _get_owned_project(db, project_id, current_user)
 
     rows = await db.fetchall(
-        "SELECT * FROM plans WHERE project_id = ? ORDER BY version DESC",
-        (project_id,),
+        "SELECT * FROM plans WHERE project_id = ? ORDER BY version DESC LIMIT ? OFFSET ?",
+        (project_id, limit, offset),
     )
     return [
         PlanOut(
@@ -495,8 +497,10 @@ async def clone_project(
 
 
 @router.get("/{project_id}/export")
+@limiter.limit("5/minute")
 @inject
 async def export_project(
+    request: Request,
     project_id: str,
     current_user: dict = Depends(get_current_user),
     db: Database = Depends(Provide[Container.db]),
@@ -655,6 +659,8 @@ async def get_coverage(
 async def list_knowledge(
     project_id: str,
     category: str | None = None,
+    limit: int = Query(default=50, le=200),
+    offset: int = Query(default=0, ge=0),
     current_user: dict = Depends(get_current_user),
     db: Database = Depends(Provide[Container.db]),
 ) -> list[FindingOut]:
@@ -664,14 +670,14 @@ async def list_knowledge(
     if category:
         rows = await db.fetchall(
             "SELECT * FROM project_knowledge WHERE project_id = ? AND category = ? "
-            "ORDER BY created_at DESC",
-            (project_id, category),
+            "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (project_id, category, limit, offset),
         )
     else:
         rows = await db.fetchall(
             "SELECT * FROM project_knowledge WHERE project_id = ? "
-            "ORDER BY created_at DESC",
-            (project_id,),
+            "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (project_id, limit, offset),
         )
 
     return [

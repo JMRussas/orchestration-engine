@@ -6,7 +6,7 @@
 #  Used by:    app.py
 
 from dependency_injector.wiring import inject, Provide
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.container import Container
 from backend.db.connection import Database
@@ -23,13 +23,16 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 @router.get("/users")
 @inject
 async def list_users(
+    limit: int = Query(default=50, le=200),
+    offset: int = Query(default=0, ge=0),
     _admin: dict = Depends(require_admin),
     db: Database = Depends(Provide[Container.db]),
 ) -> list[AdminUserOut]:
     """List all users with project counts."""
     rows = await db.fetchall(
         "SELECT id, email, display_name, role, is_active, created_at, last_login_at "
-        "FROM users ORDER BY created_at DESC"
+        "FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        (limit, offset),
     )
 
     # Batch project counts

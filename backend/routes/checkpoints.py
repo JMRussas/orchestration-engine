@@ -10,7 +10,7 @@ import json
 import time
 
 from dependency_injector.wiring import inject, Provide
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.config import DIAGNOSTIC_RAG_ENABLED
 from backend.container import Container
@@ -62,6 +62,8 @@ def _row_to_checkpoint(row) -> dict:
 async def list_checkpoints(
     project_id: str,
     resolved: bool = False,
+    limit: int = Query(default=50, le=200),
+    offset: int = Query(default=0, ge=0),
     current_user: dict = Depends(get_current_user),
     db: Database = Depends(Provide[Container.db]),
 ) -> list[CheckpointOut]:
@@ -71,14 +73,15 @@ async def list_checkpoints(
 
     if resolved:
         rows = await db.fetchall(
-            "SELECT * FROM checkpoints WHERE project_id = ? ORDER BY created_at DESC",
-            (project_id,),
+            "SELECT * FROM checkpoints WHERE project_id = ? "
+            "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (project_id, limit, offset),
         )
     else:
         rows = await db.fetchall(
             "SELECT * FROM checkpoints WHERE project_id = ? AND resolved_at IS NULL "
-            "ORDER BY created_at DESC",
-            (project_id,),
+            "ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (project_id, limit, offset),
         )
 
     return [CheckpointOut(**_row_to_checkpoint(r)) for r in rows]

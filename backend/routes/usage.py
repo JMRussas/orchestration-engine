@@ -79,6 +79,8 @@ async def get_daily_usage(
 @router.get("/by-project")
 @inject
 async def get_usage_by_project(
+    limit: int = Query(default=50, le=200),
+    offset: int = Query(default=0, ge=0),
     current_user: dict = Depends(get_current_user),
     db: Database = Depends(Provide[Container.db]),
 ) -> list[dict]:
@@ -90,7 +92,8 @@ async def get_usage_by_project(
             "COUNT(*) as calls "
             "FROM usage_log u LEFT JOIN projects p ON p.id = u.project_id "
             "WHERE u.project_id IS NOT NULL "
-            "GROUP BY u.project_id ORDER BY cost DESC",
+            "GROUP BY u.project_id ORDER BY cost DESC LIMIT ? OFFSET ?",
+            (limit, offset),
         )
     else:
         rows = await db.fetchall(
@@ -99,8 +102,8 @@ async def get_usage_by_project(
             "COUNT(*) as calls "
             "FROM usage_log u LEFT JOIN projects p ON p.id = u.project_id "
             "WHERE u.project_id IS NOT NULL AND p.owner_id = ? "
-            "GROUP BY u.project_id ORDER BY cost DESC",
-            (current_user["id"],),
+            "GROUP BY u.project_id ORDER BY cost DESC LIMIT ? OFFSET ?",
+            (current_user["id"], limit, offset),
         )
     return [
         {
