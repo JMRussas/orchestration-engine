@@ -189,14 +189,20 @@ class Executor:
         for project in projects:
             pid = project["id"]
 
-            # Check budget
-            if not await self._budget.can_spend(0.001):  # Minimal check
-                await self._progress.push_event(pid, "budget_warning", "Budget limit reached. Execution paused.")
-                await self._db.execute_write(
-                    "UPDATE projects SET status = ?, updated_at = ? WHERE id = ?",
-                    (ProjectStatus.PAUSED, time.time(), pid),
+            # Check budget — skip for projects with only Ollama (free) tasks remaining
+            if not await self._budget.can_spend(0.001):
+                non_ollama = await self._db.fetchone(
+                    "SELECT COUNT(*) as cnt FROM tasks "
+                    "WHERE project_id = ? AND model_tier != ? AND status NOT IN (?, ?, ?, ?)",
+                    (pid, ModelTier.OLLAMA.value, *_TERMINAL),
                 )
-                continue
+                if non_ollama and non_ollama["cnt"] > 0:
+                    await self._progress.push_event(pid, "budget_warning", "Budget limit reached. Execution paused.")
+                    await self._db.execute_write(
+                        "UPDATE projects SET status = ?, updated_at = ? WHERE id = ?",
+                        (ProjectStatus.PAUSED, time.time(), pid),
+                    )
+                    continue
 
             # Unblock tasks whose dependencies are now met
             await self._update_blocked_tasks(pid)

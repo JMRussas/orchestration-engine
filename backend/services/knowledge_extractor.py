@@ -4,7 +4,7 @@
 #  Findings are project-scoped and deduplicated by content hash.
 #
 #  Depends on: config.py, models/enums.py, db/connection.py,
-#              services/model_router.py
+#              services/model_router.py, utils/json_utils.py
 #  Used by:    services/task_lifecycle.py
 
 import hashlib
@@ -14,13 +14,14 @@ import time
 import uuid
 
 from backend.config import (
+    API_TIMEOUT,
     KNOWLEDGE_EXTRACTION_MAX_TOKENS,
     KNOWLEDGE_EXTRACTION_MODEL,
     KNOWLEDGE_MIN_OUTPUT_LENGTH,
 )
 from backend.models.enums import FindingCategory
 from backend.services.model_router import calculate_cost
-from backend.services.planner import _extract_json_object
+from backend.utils.json_utils import extract_json_object
 
 logger = logging.getLogger("orchestration.knowledge")
 
@@ -78,6 +79,11 @@ async def extract_knowledge(
     if not output_text or len(output_text.strip()) < KNOWLEDGE_MIN_OUTPUT_LENGTH:
         return []
 
+    # Skip extraction if budget is exhausted — task output is already paid for
+    if not await budget.can_spend(0.001):
+        logger.warning("Budget exhausted, skipping knowledge extraction for task %s", task_id)
+        return []
+
     try:
         return await _do_extract(
             task_title=task_title,
@@ -116,6 +122,7 @@ async def _do_extract(
         max_tokens=KNOWLEDGE_EXTRACTION_MAX_TOKENS,
         system=_EXTRACTION_PROMPT,
         messages=[{"role": "user", "content": user_msg}],
+        timeout=API_TIMEOUT,
     )
 
     pt = response.usage.input_tokens
@@ -139,7 +146,7 @@ async def _do_extract(
         parsed = json.loads(raw)
     except (json.JSONDecodeError, AttributeError):
         # Fallback: extract JSON from markdown fences / trailing commas
-        parsed = _extract_json_object(raw)
+        parsed = extract_json_object(raw)
 
     if not parsed or not isinstance(parsed, dict):
         logger.debug("Could not parse knowledge extraction response: %s", raw[:200])

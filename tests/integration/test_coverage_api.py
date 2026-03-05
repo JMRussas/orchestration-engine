@@ -19,7 +19,7 @@ class TestCoverageEndpoint:
 
         resp = await client.post("/api/projects", json={
             "name": "Coverage Full",
-            "requirements": "Build auth\nAdd logging",
+            "requirements": "Build auth\n\nAdd logging",
         })
         assert resp.status_code == 201
         project_id = resp.json()["id"]
@@ -57,7 +57,7 @@ class TestCoverageEndpoint:
 
         resp = await client.post("/api/projects", json={
             "name": "Coverage Partial",
-            "requirements": "Build auth\nAdd logging\nWrite tests",
+            "requirements": "Build auth\n\nAdd logging\n\nWrite tests",
         })
         assert resp.status_code == 201
         project_id = resp.json()["id"]
@@ -96,7 +96,7 @@ class TestCoverageEndpoint:
 
         resp = await client.post("/api/projects", json={
             "name": "Coverage Zero",
-            "requirements": "Build something\nTest it",
+            "requirements": "Build something\n\nTest it",
         })
         assert resp.status_code == 201
         project_id = resp.json()["id"]

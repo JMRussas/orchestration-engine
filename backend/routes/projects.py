@@ -389,9 +389,9 @@ async def cancel_project(
     now = time.time()
     await db.execute_write(
         "UPDATE tasks SET status = ?, updated_at = ? "
-        "WHERE project_id = ? AND status IN (?, ?, ?)",
+        "WHERE project_id = ? AND status IN (?, ?, ?, ?)",
         (TaskStatus.CANCELLED, now, project_id,
-         TaskStatus.PENDING, TaskStatus.BLOCKED, TaskStatus.QUEUED),
+         TaskStatus.PENDING, TaskStatus.BLOCKED, TaskStatus.QUEUED, TaskStatus.RUNNING),
     )
     await db.execute_write(
         "UPDATE projects SET status = ?, updated_at = ? WHERE id = ?",
@@ -611,9 +611,10 @@ async def get_coverage(
     row = await _get_owned_project(db, project_id, current_user)
     requirements = row["requirements"] or ""
 
-    # Parse requirement lines (same numbering as planner.py)
-    req_lines = [line.strip() for line in requirements.strip().split("\n") if line.strip()]
-    all_req_ids = [f"R{i + 1}" for i in range(len(req_lines))]
+    # Parse requirement blocks (same numbering as planner.py)
+    from backend.utils.json_utils import parse_requirements
+    req_blocks = parse_requirements(requirements)
+    all_req_ids = [f"R{i + 1}" for i in range(len(req_blocks))]
 
     # Gather requirement IDs from all tasks in this project
     task_rows = await db.fetchall(
@@ -629,7 +630,7 @@ async def get_coverage(
     for i, req_id in enumerate(all_req_ids):
         requirements_detail.append({
             "id": req_id,
-            "text": req_lines[i],
+            "text": req_blocks[i],
             "covered": req_id in covered,
         })
 

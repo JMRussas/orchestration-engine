@@ -3,16 +3,16 @@
 #  Verifies task output quality using a cheap model (Haiku).
 #  Returns PASSED, GAPS_FOUND, or HUMAN_NEEDED.
 #
-#  Depends on: backend/config.py, backend/models/enums.py
-#  Used by:    services/executor.py
+#  Depends on: backend/config.py, backend/models/enums.py, utils/json_utils.py
+#  Used by:    services/task_lifecycle.py
 
 import json
 import logging
 
-from backend.config import VERIFICATION_MAX_TOKENS, VERIFICATION_MODEL
+from backend.config import API_TIMEOUT, VERIFICATION_MAX_TOKENS, VERIFICATION_MODEL
 from backend.models.enums import VerificationResult
 from backend.services.model_router import calculate_cost
-from backend.services.planner import _extract_json_object
+from backend.utils.json_utils import extract_json_object
 
 logger = logging.getLogger("orchestration.verifier")
 
@@ -65,11 +65,25 @@ async def verify_output(
 
     Returns:
         {"result": VerificationResult, "notes": str, "cost_usd": float}
+
+    Raises:
+        RuntimeError: If the budget is exhausted (caller should skip, not crash).
     """
+    # Skip verification if budget is exhausted — output is already paid for
+    if not await budget.can_spend(0.001):
+        logger.warning("Budget exhausted, skipping verification for task %s", task_id)
+        return {"result": VerificationResult.SKIPPED, "notes": "Skipped: budget exhausted", "cost_usd": 0.0}
+
+    # Truncate long output to control verification cost
+    _MAX_OUTPUT_CHARS = 8000
+    truncated = (output_text or "(empty)")[:_MAX_OUTPUT_CHARS]
+    if output_text and len(output_text) > _MAX_OUTPUT_CHARS:
+        truncated += "\n\n[... output truncated for verification ...]"
+
     user_msg = (
         f"## Task: {task_title}\n\n"
         f"### Description\n{task_description}\n\n"
-        f"### Output\n{output_text or '(empty)'}"
+        f"### Output\n{truncated}"
     )
 
     response = await client.messages.create(
@@ -77,6 +91,7 @@ async def verify_output(
         max_tokens=VERIFICATION_MAX_TOKENS,
         system=_VERIFICATION_PROMPT,
         messages=[{"role": "user", "content": user_msg}],
+        timeout=API_TIMEOUT,
     )
 
     pt = response.usage.input_tokens
@@ -103,7 +118,7 @@ async def verify_output(
         parsed = json.loads(raw)
     except (json.JSONDecodeError, AttributeError):
         # Fallback: extract JSON from markdown fences / trailing commas
-        parsed = _extract_json_object(raw)
+        parsed = extract_json_object(raw)
 
     if parsed and isinstance(parsed, dict):
         verdict_str = parsed.get("verdict", "passed")

@@ -2,11 +2,10 @@
 #
 #  Uses Claude to generate structured plans from requirements.
 #
-#  Depends on: backend/config.py, services/model_router.py
+#  Depends on: backend/config.py, services/model_router.py, utils/json_utils.py
 #  Used by:    routes/projects.py, container.py
 
 import json
-import re
 import time
 import uuid
 
@@ -16,6 +15,7 @@ from backend.config import ANTHROPIC_API_KEY, API_TIMEOUT, PLANNING_MODEL
 from backend.exceptions import BudgetExhaustedError, NotFoundError, PlanParseError
 from backend.models.enums import PlanningRigor, PlanStatus, ProjectStatus
 from backend.services.model_router import calculate_cost
+from backend.utils.json_utils import extract_json_object, parse_requirements
 
 # Token estimates for budget reservation before API calls
 _EST_PLANNING_INPUT_TOKENS = 2000   # system prompt (~1.5k) + requirements
@@ -28,58 +28,8 @@ _MAX_TOKENS_BY_RIGOR = {
     PlanningRigor.L3: 8192,
 }
 
-
-def _strip_trailing_commas(json_str: str) -> str:
-    """Remove trailing commas before ] and } that LLMs commonly produce.
-
-    Operates outside of string literals to avoid corrupting values.
-    E.g. [{"a":1},] -> [{"a":1}] and {"a":1,} -> {"a":1}
-    """
-    return re.sub(r',\s*([}\]])', r'\1', json_str)
-
-
-def _extract_json_object(text: str) -> dict | None:
-    """Extract the first balanced JSON object from text.
-
-    Uses brace-counting instead of a greedy regex to avoid capturing
-    past the actual closing brace when Claude wraps JSON in explanation.
-    Falls back to stripping trailing commas if strict parsing fails.
-    """
-    start = text.find("{")
-    if start == -1:
-        return None
-
-    depth = 0
-    in_string = False
-    escape = False
-    for i in range(start, len(text)):
-        ch = text[i]
-        if escape:
-            escape = False
-            continue
-        if ch == "\\":
-            escape = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                raw = text[start:i + 1]
-                try:
-                    return json.loads(raw)
-                except json.JSONDecodeError:
-                    # Retry after stripping trailing commas
-                    try:
-                        return json.loads(_strip_trailing_commas(raw))
-                    except json.JSONDecodeError:
-                        return None
-    return None
+# Backward-compat alias for external importers
+_extract_json_object = extract_json_object
 
 
 # ---------------------------------------------------------------------------
@@ -304,14 +254,15 @@ class PlannerService:
         if owns_client:
             client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
 
-        # Number requirements for traceability
-        req_lines = [line for line in requirements.strip().split("\n") if line.strip()]
-        if req_lines:
-            numbered = "\n".join(f"[R{i+1}] {line}" for i, line in enumerate(req_lines))
+        # Number requirements for traceability (paragraph-based splitting)
+        req_blocks = parse_requirements(requirements)
+        if req_blocks:
+            numbered = "\n".join(f"[R{i+1}] {block}" for i, block in enumerate(req_blocks))
         else:
             numbered = requirements
         user_msg = f"Project: {project_name}\n\nRequirements:\n{numbered}"
 
+        response = None
         try:
             response = await client.messages.create(
                 model=PLANNING_MODEL,
@@ -337,11 +288,25 @@ class PlannerService:
                 # Try to extract JSON from the response (in case of markdown fences).
                 # Use a balanced-brace approach to find the outermost JSON object,
                 # instead of a greedy regex that could match too much.
-                plan_data = _extract_json_object(response_text)
+                plan_data = extract_json_object(response_text)
                 if plan_data is None:
                     raise PlanParseError("Failed to parse plan JSON from Claude response")
 
         except Exception:
+            # Record actual API spend even if parsing failed — prevents budget leak
+            if response is not None and hasattr(response, "usage"):
+                pt = response.usage.input_tokens
+                ct = response.usage.output_tokens
+                actual_cost = calculate_cost(PLANNING_MODEL, pt, ct)
+                await budget.record_spend(
+                    cost_usd=actual_cost,
+                    prompt_tokens=pt,
+                    completion_tokens=ct,
+                    provider="anthropic",
+                    model=PLANNING_MODEL,
+                    purpose="planning",
+                    project_id=project_id,
+                )
             # Reset project status so it's not stuck in PLANNING
             await db.execute_write(
                 "UPDATE projects SET status = ?, updated_at = ? WHERE id = ?",

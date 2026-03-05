@@ -9,6 +9,7 @@
 import httpx
 from dependency_injector import containers, providers
 
+from backend.config import cfg
 from backend.db.connection import Database
 from backend.services.auth import AuthService
 from backend.services.oidc import OIDCService
@@ -54,7 +55,9 @@ class Container(containers.DeclarativeContainer):
 
     # --- Core ---
     db = providers.Singleton(Database)
-    http_client = providers.Singleton(httpx.AsyncClient, timeout=300.0)
+    http_client = providers.Singleton(
+        httpx.AsyncClient, timeout=cfg("execution.http_client_timeout", 300.0),
+    )
     rag_cache = providers.Singleton(RAGIndexCache)
     tool_registry = providers.Singleton(
         ToolRegistry, http_client=http_client, rag_cache=rag_cache,

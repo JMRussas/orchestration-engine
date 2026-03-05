@@ -10,7 +10,7 @@
 import json
 import logging
 
-from backend.config import API_TIMEOUT, KNOWLEDGE_INJECTION_MAX_CHARS, MAX_TOOL_ROUNDS
+from backend.config import API_TIMEOUT, KNOWLEDGE_INJECTION_MAX_CHARS, MAX_HISTORY_ROUNDS, MAX_TOOL_ROUNDS
 from backend.models.enums import ModelTier
 from backend.services.model_router import calculate_cost, get_model_id
 
@@ -199,6 +199,13 @@ async def run_claude_task(
         # Feed tool results back
         messages.append({"role": "assistant", "content": response.content})
         messages.append({"role": "user", "content": tool_results})
+
+        # Prune old rounds to prevent quadratic token growth.
+        # Keep the first user message (task description) + last N rounds
+        # (each round = assistant + user messages).
+        max_msgs = 1 + (MAX_HISTORY_ROUNDS * 2)
+        if len(messages) > max_msgs:
+            messages = [messages[0]] + messages[-(MAX_HISTORY_ROUNDS * 2):]
 
     return {
         "output": "\n".join(text_parts),

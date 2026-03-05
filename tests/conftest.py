@@ -15,6 +15,19 @@ from dependency_injector import providers
 
 
 # ---------------------------------------------------------------------------
+# Global cleanup fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _reset_model_warnings():
+    """Reset warned-models set between tests to prevent state leak."""
+    from backend.services.model_router import _reset_warned_models
+    _reset_warned_models()
+    yield
+    _reset_warned_models()
+
+
+# ---------------------------------------------------------------------------
 # Database fixture
 # ---------------------------------------------------------------------------
 

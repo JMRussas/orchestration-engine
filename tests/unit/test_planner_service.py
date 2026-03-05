@@ -77,7 +77,7 @@ async def planner_db(tmp_db):
     await tmp_db.execute_write(
         "INSERT INTO projects (id, name, requirements, status, created_at, updated_at) "
         "VALUES (?, ?, ?, 'draft', ?, ?)",
-        ("proj_plan_001", "Test Project", "Build X\nDo Y\nTest Z", now, now),
+        ("proj_plan_001", "Test Project", "Build X\n\nDo Y\n\nTest Z", now, now),
     )
     return tmp_db
 
