@@ -59,7 +59,11 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
     auth: AuthService = Depends(Provide[Container.auth]),
 ) -> dict:
-    """Validate Bearer token and return user dict. Raises 401 on failure."""
+    """Validate Bearer token and return user dict. Raises 401 on failure.
+
+    Supports both JWT access tokens and API keys (prefixed with 'orch_').
+    API keys are validated against the api_keys table instead of JWT decode.
+    """
     if not credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -67,7 +71,21 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user, _payload = await _validate_token(auth, credentials.credentials, "access")
+    raw = credentials.credentials
+
+    # API key path: keys start with 'orch_'
+    if raw.startswith("orch_"):
+        user = await auth.validate_api_key(raw)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or revoked API key",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return user
+
+    # JWT path
+    user, _payload = await _validate_token(auth, raw, "access")
     return user
 
 

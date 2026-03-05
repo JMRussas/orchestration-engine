@@ -1,6 +1,6 @@
 #  Orchestration Engine - Auth Routes
 #
-#  Registration, login, token refresh, and user profile endpoints.
+#  Registration, login, token refresh, user profile, and API key management.
 #
 #  Depends on: container.py, services/auth.py, middleware/auth.py
 #  Used by:    app.py
@@ -13,6 +13,9 @@ from backend.container import Container
 from backend.rate_limit import limiter
 from backend.middleware.auth import get_current_user
 from backend.models.schemas import (
+    ApiKeyCreate,
+    ApiKeyCreated,
+    ApiKeyOut,
     LoginRequest,
     LoginResponse,
     RefreshRequest,
@@ -81,3 +84,47 @@ async def get_me(
 ) -> UserOut:
     """Get the current authenticated user's profile."""
     return UserOut(**user)
+
+
+# ------------------------------------------------------------------
+# API Keys
+# ------------------------------------------------------------------
+
+@router.post("/api-keys", status_code=201)
+@inject
+async def create_api_key(
+    body: ApiKeyCreate,
+    user: dict = Depends(get_current_user),
+    auth: AuthService = Depends(Provide[Container.auth]),
+) -> ApiKeyCreated:
+    """Create a new API key for MCP/external executor authentication.
+
+    The full key is returned only once — store it securely.
+    """
+    result = await auth.create_api_key(user["id"], body.name)
+    return ApiKeyCreated(**result)
+
+
+@router.get("/api-keys")
+@inject
+async def list_api_keys(
+    user: dict = Depends(get_current_user),
+    auth: AuthService = Depends(Provide[Container.auth]),
+) -> list[ApiKeyOut]:
+    """List all API keys for the current user."""
+    keys = await auth.list_api_keys(user["id"])
+    return [ApiKeyOut(**k) for k in keys]
+
+
+@router.delete("/api-keys/{key_id}")
+@inject
+async def revoke_api_key(
+    key_id: str,
+    user: dict = Depends(get_current_user),
+    auth: AuthService = Depends(Provide[Container.auth]),
+):
+    """Revoke an API key. Cannot be undone."""
+    revoked = await auth.revoke_api_key(key_id, user["id"])
+    if not revoked:
+        raise HTTPException(status_code=404, detail="API key not found")
+    return {"status": "revoked", "key_id": key_id}

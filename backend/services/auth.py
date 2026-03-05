@@ -9,6 +9,7 @@
 
 import hashlib
 import logging
+import secrets
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -431,6 +432,89 @@ class AuthService:
             (time.time(),),
         )
         return cursor.rowcount
+
+    # ------------------------------------------------------------------
+    # Password management
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # API key management
+    # ------------------------------------------------------------------
+
+    async def create_api_key(self, user_id: str, name: str) -> dict:
+        """Create a new API key for MCP/external executor auth.
+
+        Returns dict with id, key (full, shown once), key_prefix, name, created_at.
+        The key is stored as a SHA-256 hash — the plaintext is never persisted.
+        """
+        raw_key = f"orch_{secrets.token_hex(32)}"
+        key_prefix = raw_key[:12]
+        key_hash = self._hash_token(raw_key)
+        key_id = uuid.uuid4().hex
+        now = time.time()
+
+        await self._db.execute_write(
+            "INSERT INTO api_keys (id, key_hash, key_prefix, user_id, name, is_active, created_at) "
+            "VALUES (?, ?, ?, ?, ?, 1, ?)",
+            (key_id, key_hash, key_prefix, user_id, name, now),
+        )
+        logger.info("API key created: %s (%s) for user %s", key_prefix, name, user_id)
+        return {
+            "id": key_id,
+            "key": raw_key,
+            "key_prefix": key_prefix,
+            "name": name,
+            "created_at": now,
+        }
+
+    async def validate_api_key(self, raw_key: str) -> dict | None:
+        """Validate an API key, return user dict if valid.
+
+        Updates last_used_at on success. Returns None if invalid/inactive.
+        """
+        key_hash = self._hash_token(raw_key)
+        row = await self._db.fetchone(
+            "SELECT ak.*, u.id as uid, u.email, u.display_name, u.role, u.is_active as user_active "
+            "FROM api_keys ak JOIN users u ON ak.user_id = u.id "
+            "WHERE ak.key_hash = ? AND ak.is_active = 1",
+            (key_hash,),
+        )
+        if not row:
+            return None
+        if not row["user_active"]:
+            return None
+
+        # Update last used timestamp
+        await self._db.execute_write(
+            "UPDATE api_keys SET last_used_at = ? WHERE id = ?",
+            (time.time(), row["id"]),
+        )
+        return {
+            "id": row["uid"],
+            "email": row["email"],
+            "display_name": row["display_name"],
+            "role": row["role"],
+        }
+
+    async def list_api_keys(self, user_id: str) -> list[dict]:
+        """List all API keys for a user (without hashes)."""
+        rows = await self._db.fetchall(
+            "SELECT id, key_prefix, name, is_active, created_at, last_used_at "
+            "FROM api_keys WHERE user_id = ? ORDER BY created_at DESC",
+            (user_id,),
+        )
+        return [dict(r) for r in rows]
+
+    async def revoke_api_key(self, key_id: str, user_id: str) -> bool:
+        """Revoke an API key. Returns True if the key was found and revoked."""
+        cursor = await self._db.execute_write(
+            "UPDATE api_keys SET is_active = 0 WHERE id = ? AND user_id = ?",
+            (key_id, user_id),
+        )
+        if cursor.rowcount > 0:
+            logger.info("API key %s revoked by user %s", key_id, user_id)
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # Password management

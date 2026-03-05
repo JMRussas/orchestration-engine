@@ -5,8 +5,9 @@
 #
 #  Depends on: config.py, services/claude_agent.py, services/ollama_agent.py,
 #              services/budget.py, services/progress.py, services/diagnostic_ingest.py,
+#              services/model_router.py, services/knowledge_extractor.py,
 #              tools/rag.py (_embed_query, RAGIndexCache)
-#  Used by:    services/executor.py
+#  Used by:    services/executor.py, routes/external.py
 
 import asyncio
 import json
@@ -515,3 +516,86 @@ async def execute_task(
         if est_cost > 0:
             await budget.release_reservation(est_cost)
             await budget.release_reservation_project(task_row["project_id"], est_cost)
+
+
+async def complete_task_external(
+    *,
+    task_id,
+    task_row,
+    project_id,
+    output_text,
+    model_used,
+    prompt_tokens,
+    completion_tokens,
+    db,
+    budget,
+    progress,
+):
+    """Process an externally-submitted task result.
+
+    Handles: cost recording, marking complete, context forwarding,
+    and knowledge extraction. Verification is skipped for external tasks
+    (the external executor is trusted for now).
+
+    Returns dict with status and optional verification fields.
+    """
+    from backend.services.model_router import calculate_cost
+
+    # Calculate cost from tokens
+    cost_usd = calculate_cost(model_used, prompt_tokens, completion_tokens)
+
+    # Record spend
+    await budget.record_spend(
+        cost_usd=cost_usd,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        provider="anthropic",
+        model=model_used,
+        project_id=project_id,
+        task_id=task_id,
+        purpose="external_execution",
+    )
+
+    # Mark task completed
+    now = time.time()
+    await db.execute_write(
+        "UPDATE tasks SET status = ?, output_text = ?, model_used = ?, "
+        "prompt_tokens = ?, completion_tokens = ?, cost_usd = ?, "
+        "completed_at = ?, updated_at = ? WHERE id = ?",
+        (
+            TaskStatus.COMPLETED, output_text, model_used,
+            prompt_tokens, completion_tokens, cost_usd,
+            now, now, task_id,
+        ),
+    )
+
+    await progress.push_event(
+        project_id, "task_complete", task_row["title"],
+        task_id=task_id, cost_usd=cost_usd,
+    )
+
+    # Forward context to dependent tasks
+    await forward_context(
+        completed_task=task_row, output_text=output_text, db=db,
+    )
+
+    # Extract knowledge (best-effort, non-blocking)
+    if KNOWLEDGE_EXTRACTION_ENABLED:
+        try:
+            import anthropic as anthropic_mod
+            client = anthropic_mod.AsyncAnthropic()
+            from backend.services.knowledge_extractor import extract_knowledge
+            await extract_knowledge(
+                task_title=task_row["title"],
+                task_description=task_row["description"],
+                output_text=output_text,
+                client=client,
+                budget=budget,
+                project_id=project_id,
+                task_id=task_id,
+                db=db,
+            )
+        except Exception as e:
+            logger.warning("Knowledge extraction failed for external task %s: %s", task_id, e)
+
+    return {"status": TaskStatus.COMPLETED}

@@ -127,6 +127,7 @@ KNOWLEDGE_EXTRACTION_MODEL = cfg("execution.knowledge_extraction_model", "claude
 KNOWLEDGE_EXTRACTION_MAX_TOKENS = cfg("execution.knowledge_extraction_max_tokens", 1024)
 KNOWLEDGE_INJECTION_MAX_CHARS = cfg("execution.knowledge_injection_max_chars", 3000)
 KNOWLEDGE_MIN_OUTPUT_LENGTH = cfg("execution.knowledge_min_output_length", 200)
+EXTERNAL_CLAIM_TIMEOUT_SECONDS = cfg("execution.external_claim_timeout_seconds", 3600)
 
 # Model pricing
 MODEL_PRICING = cfg("model_pricing", {})
