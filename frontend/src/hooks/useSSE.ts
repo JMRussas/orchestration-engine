@@ -4,6 +4,9 @@
 // Fetches a short-lived SSE token before connecting (never exposes
 // the full access token in a URL).
 //
+// Reconnects with exponential backoff and fresh tokens on failure.
+// Stops after MAX_RETRIES consecutive failures to avoid infinite loops.
+//
 // Depends on: types/index.ts, api/auth.ts, api/client.ts
 // Used by:    pages/ProjectDetail.tsx
 
@@ -12,6 +15,9 @@ import type { SSEEvent } from '../types'
 import { apiPost } from '../api/client'
 
 const MAX_EVENTS = 200
+const MAX_RETRIES = 5
+const BASE_BACKOFF_MS = 1000
+const MAX_BACKOFF_MS = 30000
 
 interface SSEState {
   events: SSEEvent[]
@@ -34,15 +40,20 @@ export function useSSE(projectId: string | null, options?: UseSSEOptions): SSESt
   const sourceRef = useRef<EventSource | null>(null)
   const onEventRef = useRef(options?.onEvent)
   onEventRef.current = options?.onEvent
+  const retryCountRef = useRef(0)
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     if (!projectId) return
 
+    retryCountRef.current = 0
     let cancelled = false
 
     async function connect() {
+      if (cancelled) return
+
       try {
-        // Fetch a short-lived SSE token scoped to this project
+        // Fetch a fresh short-lived SSE token scoped to this project
         const { token } = await apiPost<{ token: string }>(
           `/events/${projectId}/token`
         )
@@ -53,6 +64,7 @@ export function useSSE(projectId: string | null, options?: UseSSEOptions): SSESt
         sourceRef.current = source
 
         source.onopen = () => {
+          retryCountRef.current = 0
           setState(prev => ({ ...prev, connected: true }))
         }
 
@@ -72,11 +84,39 @@ export function useSSE(projectId: string | null, options?: UseSSEOptions): SSESt
         }
 
         source.onerror = () => {
+          // Close immediately — built-in auto-reconnect won't work because
+          // the SSE token is short-lived and will be expired on retry
+          source.close()
+          sourceRef.current = null
           setState(prev => ({ ...prev, connected: false }))
-          // Don't close — let EventSource auto-reconnect
+
+          if (cancelled) return
+
+          retryCountRef.current++
+          if (retryCountRef.current > MAX_RETRIES) {
+            return // Stop after too many consecutive failures
+          }
+
+          // Reconnect with exponential backoff and a fresh token
+          const delay = Math.min(
+            BASE_BACKOFF_MS * Math.pow(2, retryCountRef.current - 1),
+            MAX_BACKOFF_MS,
+          )
+          reconnectTimerRef.current = setTimeout(connect, delay)
         }
       } catch {
         setState(prev => ({ ...prev, connected: false }))
+
+        if (cancelled) return
+
+        retryCountRef.current++
+        if (retryCountRef.current > MAX_RETRIES) return
+
+        const delay = Math.min(
+          BASE_BACKOFF_MS * Math.pow(2, retryCountRef.current - 1),
+          MAX_BACKOFF_MS,
+        )
+        reconnectTimerRef.current = setTimeout(connect, delay)
       }
     }
 
@@ -84,6 +124,10 @@ export function useSSE(projectId: string | null, options?: UseSSEOptions): SSESt
 
     return () => {
       cancelled = true
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
       if (sourceRef.current) {
         sourceRef.current.close()
         sourceRef.current = null

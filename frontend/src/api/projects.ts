@@ -1,6 +1,6 @@
 // Orchestration Engine - Projects API
 
-import { apiFetch, apiPost, apiPatch, apiDelete } from './client'
+import { apiFetch, apiPost, apiPatch, apiDelete, authFetch } from './client'
 import type { Project, Plan, Task, Checkpoint, CoverageReport, PlanningRigor } from '../types'
 
 export const listProjects = (status?: string) =>
@@ -83,11 +83,7 @@ export const cloneProject = (projectId: string) =>
   apiPost<Project>(`/projects/${projectId}/clone`)
 
 export const exportProject = async (projectId: string) => {
-  const { getAccessToken } = await import('./auth')
-  const token = getAccessToken()
-  const resp = await fetch(`/api/projects/${projectId}/export`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  })
+  const resp = await authFetch(`/projects/${projectId}/export`)
   if (!resp.ok) throw new Error('Export failed')
   const blob = await resp.blob()
   const url = URL.createObjectURL(blob)

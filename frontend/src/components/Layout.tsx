@@ -13,7 +13,7 @@ export default function Layout() {
 
   return (
     <div className="layout">
-      <nav className="sidebar">
+      <nav className="sidebar" aria-label="Main navigation">
         <h1>Orchestration</h1>
         <NavLink to="/" className={({ isActive }) => isActive ? 'active' : ''} end>
           Dashboard

@@ -37,4 +37,20 @@ describe('Modal', () => {
     fireEvent.click(screen.getByText('Content'))
     expect(onClose).not.toHaveBeenCalled()
   })
+
+  it('has correct ARIA attributes', () => {
+    render(<Modal open={true} onClose={vi.fn()} title="Accessible Modal">Body</Modal>)
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    expect(dialog).toHaveAttribute('aria-labelledby')
+
+    // Title is connected via aria-labelledby
+    const titleId = dialog.getAttribute('aria-labelledby')!
+    expect(document.getElementById(titleId)?.textContent).toBe('Accessible Modal')
+  })
+
+  it('close button has aria-label', () => {
+    render(<Modal open={true} onClose={vi.fn()} title="Test">Content</Modal>)
+    expect(screen.getByLabelText('Close')).toBeInTheDocument()
+  })
 })

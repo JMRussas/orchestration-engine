@@ -6,7 +6,7 @@
 // Depends on: api/auth.ts, hooks/useAuth.tsx
 // Used by:    App.tsx
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { completeOIDCLogin } from '../api/auth'
 import { useAuth } from '../hooks/useAuth'
@@ -16,8 +16,12 @@ export default function OIDCCallback() {
   const navigate = useNavigate()
   const { setUserFromOIDC } = useAuth()
   const [error, setError] = useState('')
+  const processedRef = useRef(false)
 
   useEffect(() => {
+    if (processedRef.current) return
+    processedRef.current = true
+
     const code = searchParams.get('code')
     const state = searchParams.get('state')
     const errorParam = searchParams.get('error')
