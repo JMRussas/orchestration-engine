@@ -10,7 +10,7 @@ import { getAccessToken, apiRefresh } from './auth'
 
 const BASE = '/api'
 
-async function authFetch(path: string, init?: RequestInit): Promise<Response> {
+export async function authFetch(path: string, init?: RequestInit): Promise<Response> {
   const token = getAccessToken()
   const headers = new Headers(init?.headers)
   if (token) {

@@ -19,14 +19,16 @@ export default function Admin() {
   const { data: users, loading: usersLoading, error: usersError, refetch: refetchUsers } = useFetch<AdminUser[]>(listUsers)
   const { data: stats, loading: statsLoading, error: statsError } = useFetch<AdminStats>(getStats)
   const [updating, setUpdating] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const handleToggleActive = useCallback(async (user: AdminUser) => {
     setUpdating(user.id)
+    setActionError(null)
     try {
       await updateUser(user.id, { is_active: !user.is_active })
       refetchUsers()
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Update failed')
+      setActionError(err instanceof Error ? err.message : 'Update failed')
     } finally {
       setUpdating(null)
     }
@@ -34,11 +36,12 @@ export default function Admin() {
 
   const handleChangeRole = useCallback(async (user: AdminUser, role: 'admin' | 'user') => {
     setUpdating(user.id)
+    setActionError(null)
     try {
       await updateUser(user.id, { role })
       refetchUsers()
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Update failed')
+      setActionError(err instanceof Error ? err.message : 'Update failed')
     } finally {
       setUpdating(null)
     }
@@ -109,6 +112,7 @@ export default function Admin() {
       {/* Users */}
       <div className="card">
         <h2>Users</h2>
+        {actionError && <div className="auth-error mb-1">{actionError}</div>}
         {usersLoading && <p className="text-dim">Loading users...</p>}
         {usersError && <p className="text-dim">Failed to load users: {usersError}</p>}
         {users && (

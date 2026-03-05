@@ -6,14 +6,15 @@
 // Used by:    App.tsx
 
 import { useEffect, useState } from 'react'
-import { useAuth } from '../hooks/useAuth'
 import {
   getCostBreakdown, getTaskOutcomes, getEfficiency,
   type CostBreakdown, type TaskOutcomes, type Efficiency,
 } from '../api/analytics'
 
 const pctBar = (value: number, className = 'ok') => (
-  <div className="progress-bar" style={{ width: '100px', display: 'inline-block', verticalAlign: 'middle' }}>
+  <div className="progress-bar" role="progressbar"
+    aria-valuenow={Math.round(value * 100)} aria-valuemin={0} aria-valuemax={100}
+    style={{ width: '100px', display: 'inline-block', verticalAlign: 'middle' }}>
     <div className={`progress-fill ${className}`} style={{ width: `${Math.min(value * 100, 100)}%` }} />
   </div>
 )
@@ -21,7 +22,6 @@ const pctBar = (value: number, className = 'ok') => (
 const pctClass = (rate: number) => rate >= 0.8 ? 'ok' : rate >= 0.5 ? 'warn' : 'danger'
 
 export default function Analytics() {
-  const { user } = useAuth()
   const [cost, setCost] = useState<CostBreakdown | null>(null)
   const [outcomes, setOutcomes] = useState<TaskOutcomes | null>(null)
   const [efficiency, setEfficiency] = useState<Efficiency | null>(null)
@@ -29,7 +29,6 @@ export default function Analytics() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (user?.role !== 'admin') { setLoading(false); return }
     const errors: string[] = []
     Promise.allSettled([
       getCostBreakdown().then(setCost),
@@ -42,9 +41,8 @@ export default function Analytics() {
       if (errors.length) setError(errors.join('; '))
       setLoading(false)
     })
-  }, [user])
+  }, [])
 
-  if (user?.role !== 'admin') return <p className="text-dim">Access denied. Admin role required.</p>
   if (loading) return <p className="text-dim">Loading analytics...</p>
 
   return (

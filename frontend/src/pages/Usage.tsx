@@ -36,7 +36,9 @@ export default function Usage() {
               <span className="cost" style={{ fontSize: '1.5rem' }}>${budget.daily_spent_usd.toFixed(2)}</span>
               <span className="text-dim">/ ${budget.daily_limit_usd.toFixed(2)} ({budget.daily_pct.toFixed(0)}%)</span>
             </div>
-            <div className="progress-bar">
+            <div className="progress-bar" role="progressbar"
+              aria-valuenow={Math.round(budget.daily_pct)} aria-valuemin={0} aria-valuemax={100}
+              aria-label="Daily budget usage">
               <div className={`progress-fill ${pctClass(budget.daily_pct)}`}
                 style={{ width: `${Math.min(budget.daily_pct, 100)}%` }} />
             </div>
@@ -47,7 +49,9 @@ export default function Usage() {
               <span className="cost" style={{ fontSize: '1.5rem' }}>${budget.monthly_spent_usd.toFixed(2)}</span>
               <span className="text-dim">/ ${budget.monthly_limit_usd.toFixed(2)} ({budget.monthly_pct.toFixed(0)}%)</span>
             </div>
-            <div className="progress-bar">
+            <div className="progress-bar" role="progressbar"
+              aria-valuenow={Math.round(budget.monthly_pct)} aria-valuemin={0} aria-valuemax={100}
+              aria-label="Monthly budget usage">
               <div className={`progress-fill ${pctClass(budget.monthly_pct)}`}
                 style={{ width: `${Math.min(budget.monthly_pct, 100)}%` }} />
             </div>

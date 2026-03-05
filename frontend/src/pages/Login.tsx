@@ -42,9 +42,10 @@ export default function Login() {
         <h2>Sign In</h2>
         {error && <div className="auth-error">{error}</div>}
         <form onSubmit={handleSubmit}>
-          <label>
+          <label htmlFor="login-email">
             Email
             <input
+              id="login-email"
               type="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
@@ -52,9 +53,10 @@ export default function Login() {
               autoFocus
             />
           </label>
-          <label>
+          <label htmlFor="login-password">
             Password
             <input
+              id="login-password"
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}

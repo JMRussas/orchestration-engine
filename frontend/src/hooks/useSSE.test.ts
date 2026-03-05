@@ -118,7 +118,7 @@ describe('useSSE', () => {
     expect(result.current.events[0].type).toBe('task_start')
   })
 
-  it('onerror sets connected to false', async () => {
+  it('onerror closes source and sets disconnected', async () => {
     mockApiPost.mockResolvedValue({ token: 'tok' })
 
     const { result } = renderHook(() => useSSE('proj_001'))
@@ -132,10 +132,64 @@ describe('useSSE', () => {
     })
     expect(result.current.connected).toBe(true)
 
+    // Trigger error — should close source immediately (not leave open for
+    // auto-reconnect, which would fail with an expired SSE token)
     act(() => {
       MockEventSource.instances[0]._fireError()
     })
     expect(result.current.connected).toBe(false)
+    expect(MockEventSource.instances[0].closed).toBe(true)
+  })
+
+  it('reconnects with fresh token after error', async () => {
+    mockApiPost
+      .mockResolvedValueOnce({ token: 'tok1' })
+      .mockResolvedValueOnce({ token: 'tok2' })
+
+    renderHook(() => useSSE('proj_001'))
+
+    await waitFor(() => {
+      expect(MockEventSource.instances).toHaveLength(1)
+    })
+
+    // Trigger error to start reconnect
+    act(() => {
+      MockEventSource.instances[0]._fireError()
+    })
+
+    // Wait for the backoff timer + reconnect to create a new EventSource
+    await waitFor(() => {
+      expect(MockEventSource.instances).toHaveLength(2)
+    }, { timeout: 3000 })
+
+    // Second connection should use a fresh token
+    expect(mockApiPost).toHaveBeenCalledTimes(2)
+    expect(MockEventSource.instances[1].url).toContain('tok2')
+  })
+
+  it('onopen resets retry count', async () => {
+    mockApiPost.mockResolvedValue({ token: 'tok' })
+
+    const { result } = renderHook(() => useSSE('proj_001'))
+
+    await waitFor(() => {
+      expect(MockEventSource.instances).toHaveLength(1)
+    })
+
+    // Error then reconnect
+    act(() => {
+      MockEventSource.instances[0]._fireError()
+    })
+
+    await waitFor(() => {
+      expect(MockEventSource.instances).toHaveLength(2)
+    }, { timeout: 3000 })
+
+    // Successful open should reset retry count
+    act(() => {
+      MockEventSource.instances[1]._fireOpen()
+    })
+    expect(result.current.connected).toBe(true)
   })
 
   it('cleanup on unmount closes source', async () => {
@@ -151,7 +205,7 @@ describe('useSSE', () => {
     expect(MockEventSource.instances[0].closed).toBe(true)
   })
 
-  it('token fetch failure → connected false', async () => {
+  it('token fetch failure → connected false, retries later', async () => {
     mockApiPost.mockRejectedValue(new Error('Auth failed'))
 
     const { result } = renderHook(() => useSSE('proj_001'))
@@ -162,5 +216,7 @@ describe('useSSE', () => {
 
     expect(result.current.connected).toBe(false)
     expect(MockEventSource.instances).toHaveLength(0)
+    // Will retry with backoff — first attempt already counted
+    expect(mockApiPost).toHaveBeenCalledTimes(1)
   })
 })

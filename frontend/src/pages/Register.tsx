@@ -44,27 +44,30 @@ export default function Register() {
         <h2>Create Account</h2>
         {error && <div className="auth-error">{error}</div>}
         <form onSubmit={handleSubmit}>
-          <label>
+          <label htmlFor="register-name">
             Display Name
             <input
+              id="register-name"
               type="text"
               value={displayName}
               onChange={e => setDisplayName(e.target.value)}
               placeholder="Optional"
             />
           </label>
-          <label>
+          <label htmlFor="register-email">
             Email
             <input
+              id="register-email"
               type="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
               required
             />
           </label>
-          <label>
+          <label htmlFor="register-password">
             Password
             <input
+              id="register-password"
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}

@@ -3,22 +3,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 
-vi.mock('../hooks/useAuth', () => ({
-  useAuth: vi.fn(),
-}))
-
 vi.mock('../api/analytics', () => ({
   getCostBreakdown: vi.fn(),
   getTaskOutcomes: vi.fn(),
   getEfficiency: vi.fn(),
 }))
 
-import { useAuth } from '../hooks/useAuth'
 import { getCostBreakdown, getTaskOutcomes, getEfficiency } from '../api/analytics'
 import type { CostBreakdown, TaskOutcomes, Efficiency } from '../api/analytics'
 import Analytics from './Analytics'
-
-const mockUseAuth = vi.mocked(useAuth)
 
 const mockGetCostBreakdown = vi.mocked(getCostBreakdown)
 const mockGetTaskOutcomes = vi.mocked(getTaskOutcomes)
@@ -71,14 +64,6 @@ function setupMocks() {
 
 beforeEach(() => {
   vi.resetAllMocks()
-  mockUseAuth.mockReturnValue({
-    user: { id: 'u1', email: 'admin@test.com', display_name: 'Admin', role: 'admin' },
-    loading: false,
-    login: vi.fn(),
-    loginWithOIDC: vi.fn(),
-    setUserFromOIDC: vi.fn(),
-    logout: vi.fn(),
-  })
 })
 
 describe('Analytics', () => {
@@ -201,18 +186,6 @@ describe('Analytics', () => {
     expect(screen.getByText('Project Alpha')).toBeInTheDocument()
   })
 
-  it('shows access denied for non-admin users', () => {
-    mockUseAuth.mockReturnValue({
-      user: { id: 'u2', email: 'user@test.com', display_name: 'User', role: 'user' },
-      loading: false,
-      login: vi.fn(),
-      loginWithOIDC: vi.fn(),
-      setUserFromOIDC: vi.fn(),
-      logout: vi.fn(),
-    })
-
-    render(<Analytics />)
-    expect(screen.getByText(/Access denied/)).toBeInTheDocument()
-    expect(mockGetCostBreakdown).not.toHaveBeenCalled()
-  })
+  // Note: admin role enforcement moved to RequireRole route guard (App.tsx).
+  // Analytics component itself always fetches data — access control is at the router level.
 })
