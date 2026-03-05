@@ -8,7 +8,6 @@
 import json
 import time
 
-import pytest
 
 
 async def _setup_executing_project(client, execution_mode="external"):

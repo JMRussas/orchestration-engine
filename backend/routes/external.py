@@ -12,7 +12,7 @@ import logging
 import time
 
 from dependency_injector.wiring import inject, Provide
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 
 from backend.container import Container
 from backend.db.connection import Database
@@ -32,8 +32,6 @@ from backend.services.budget import BudgetManager
 from backend.services.progress import ProgressManager
 from backend.services.task_lifecycle import (
     complete_task_external,
-    forward_context,
-    verify_task_output,
 )
 
 logger = logging.getLogger("orchestration.external")

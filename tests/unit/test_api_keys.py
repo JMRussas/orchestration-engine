@@ -5,7 +5,6 @@
 #  Depends on: conftest.py (tmp_db, auth_service)
 #  Used by:    CI
 
-import pytest
 
 
 class TestApiKeyCreation:
