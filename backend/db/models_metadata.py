@@ -103,6 +103,8 @@ tasks = Table(
     Column("updated_at", Float, nullable=False),
     Column("git_branch", Text),
     Column("git_commit_sha", Text),
+    Column("claimed_by", Text),
+    Column("claimed_at", Float),
 )
 
 task_deps = Table(
@@ -201,7 +203,22 @@ project_knowledge = Table(
     Column("created_at", Float, nullable=False),
 )
 
+api_keys = Table(
+    "api_keys",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("key_hash", Text, nullable=False, unique=True),
+    Column("key_prefix", Text, nullable=False),
+    Column("user_id", Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("name", Text, nullable=False),
+    Column("is_active", Integer, nullable=False, server_default="1"),
+    Column("created_at", Float, nullable=False),
+    Column("last_used_at", Float),
+)
+
 # Indexes
+Index("idx_api_keys_hash", api_keys.c.key_hash)
+Index("idx_api_keys_user", api_keys.c.user_id)
 Index("idx_identities_user", user_identities.c.user_id)
 Index("idx_identities_provider_uid", user_identities.c.provider, user_identities.c.provider_user_id, unique=True)
 Index("idx_checkpoints_project", checkpoints.c.project_id)

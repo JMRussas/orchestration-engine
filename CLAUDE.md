@@ -44,12 +44,15 @@ docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 | `backend/db/migrate.py` | Programmatic Alembic migration runner |
 | `backend/db/models_metadata.py` | SQLAlchemy Table definitions for Alembic |
 | `backend/migrations/` | Alembic migration versions |
-| `backend/middleware/auth.py` | JWT auth dependencies (Bearer, admin, SSE token) |
+| `backend/mcp/server.py` | FastMCP stdio server for Claude Code integration |
+| `backend/mcp/config.example.json` | MCP server config template |
+| `backend/middleware/auth.py` | JWT + API key auth dependencies (Bearer, admin, SSE token) |
 | `backend/models/` | Pydantic schemas, status enums |
 | `backend/routes/auth.py` | Register, login, refresh, me endpoints |
 | `backend/routes/checkpoints.py` | Checkpoint list, get, resolve endpoints |
 | `backend/routes/admin.py` | Admin-only user management, system stats |
 | `backend/routes/analytics.py` | Admin-only analytics (cost, outcomes, efficiency) |
+| `backend/routes/external.py` | External task execution (claim, submit, release) |
 | `backend/routes/rag.py` | Read-only RAG database inspection endpoints |
 | `backend/routes/` | REST endpoints (projects, tasks, usage, services, events) |
 | `backend/services/auth.py` | Password hashing, JWT encode/decode, SSE tokens, user management |
@@ -87,7 +90,7 @@ docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 - **DI Container**: `backend/container.py` wires all singletons; routes use `@inject` + `Depends(Provide[...])`
 - **Database**: async SQLite via aiosqlite, WAL mode, all access via `Database` class
 - **Migrations**: Alembic manages schema; `Database.init(run_migrations=True)` in production, inline schema in tests
-- **Auth**: JWT Bearer tokens for REST, short-lived SSE tokens for EventSource. First registered user becomes admin.
+- **Auth**: JWT Bearer tokens for REST, API keys (`orch_` prefix) for MCP/external executors, short-lived SSE tokens for EventSource. First registered user becomes admin.
 - **Ownership**: projects have `owner_id`. Users see/modify only their own projects. Admins can access all.
 - **Budget**: every API call recorded in `usage_log`, checked against limits before execution. Budget endpoints are admin-only.
 - **Models**: Ollama (free) for simple tasks, Haiku ($) for medium, Sonnet ($$) for complex
@@ -103,8 +106,9 @@ docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 - **Verification**: optional post-completion check via Haiku (PASSED/GAPS_FOUND/HUMAN_NEEDED outcomes)
 - **Checkpoints**: retry-exhausted tasks create structured checkpoints for human resolution
 - **Traceability**: requirements numbered [R1], [R2], mapped to tasks; coverage endpoint shows gaps
+- **External execution**: MCP server (`backend/mcp/server.py`) for Claude Code integration. Execution modes: auto (engine-only), hybrid (Ollama internal, Claude external), external (all external). Tasks claimed atomically via CAS, results submitted with cost tracking.
 - **Git integration**: optional per-project (`repo_path` nullable). `GitService` wraps subprocess via `asyncio.to_thread()`. Config in `git.*` section. Phase 1 (foundation) complete; execution wiring (Phase 2+) pending.
-- **Tests**: Backend: pytest-asyncio (auto mode), 578 tests, 86% coverage (CI threshold 80%). Frontend: vitest + @testing-library/react, 137 tests. Load tests: 7 (excluded from CI via `slow` marker)
+- **Tests**: Backend: pytest-asyncio (auto mode), 731 tests. Frontend: vitest + @testing-library/react, 137 tests. Load tests: 7 (excluded from CI via `slow` marker)
 
 ## Git Workflow
 

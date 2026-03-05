@@ -425,6 +425,73 @@ class AnalyticsEfficiency(BaseModel):
 # RAG
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# API Keys
+# ---------------------------------------------------------------------------
+
+class ApiKeyCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+class ApiKeyOut(BaseModel):
+    id: str
+    key_prefix: str
+    name: str
+    is_active: bool
+    created_at: float
+    last_used_at: float | None = None
+
+
+class ApiKeyCreated(BaseModel):
+    """Returned only on creation — includes the full key (shown once)."""
+    id: str
+    key: str
+    key_prefix: str
+    name: str
+    created_at: float
+
+
+# ---------------------------------------------------------------------------
+# External Execution
+# ---------------------------------------------------------------------------
+
+class TaskClaimResponse(BaseModel):
+    id: str
+    project_id: str
+    title: str
+    description: str
+    task_type: str
+    model_tier: str
+    wave: int
+    priority: int
+    phase: str | None = None
+    system_prompt: str = ""
+    context: list = Field(default_factory=list)
+    tools: list = Field(default_factory=list)
+    depends_on: list[str] = Field(default_factory=list)
+    max_tokens: int = 4096
+    requirement_ids: list[str] = Field(default_factory=list)
+
+
+class TaskResultSubmission(BaseModel):
+    output_text: str = Field(..., min_length=1, max_length=500_000)
+    model_used: str = Field(..., min_length=1, max_length=100)
+    prompt_tokens: int = Field(default=0, ge=0)
+    completion_tokens: int = Field(default=0, ge=0)
+
+
+class TaskResultResponse(BaseModel):
+    task_id: str
+    status: str
+    verification_status: str | None = None
+    verification_notes: str | None = None
+    next_claimable_task_id: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# RAG
+# ---------------------------------------------------------------------------
+
 class RAGDatabaseInfo(BaseModel):
     name: str
     path: str

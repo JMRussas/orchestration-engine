@@ -96,7 +96,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
     git_branch TEXT,
-    git_commit_sha TEXT
+    git_commit_sha TEXT,
+    claimed_by TEXT,
+    claimed_at REAL
 );
 
 CREATE TABLE IF NOT EXISTS task_deps (
@@ -179,6 +181,20 @@ CREATE TABLE IF NOT EXISTS refresh_token_families (
     created_at REAL NOT NULL,
     expires_at REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS api_keys (
+    id TEXT PRIMARY KEY,
+    key_hash TEXT NOT NULL UNIQUE,
+    key_prefix TEXT NOT NULL,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at REAL NOT NULL,
+    last_used_at REAL
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
+CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_rtf_token_hash
     ON refresh_token_families(token_hash);

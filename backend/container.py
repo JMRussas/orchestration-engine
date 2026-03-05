@@ -49,6 +49,7 @@ class Container(containers.DeclarativeContainer):
             "backend.routes.analytics",
             "backend.routes.rag",
             "backend.routes.auth_oidc",
+            "backend.routes.external",
             "backend.middleware.auth",
         ]
     )
