@@ -130,7 +130,7 @@ def create_server(config_path: Path | None = None) -> FastMCP:
             phases = plan.get("phases", [])
             summary = plan.get("summary", "No summary")
 
-            out = f"--- Plan Generated ---\n"
+            out = "--- Plan Generated ---\n"
             out += f"Plan ID: {result['id']}\n"
             out += f"Model: {result['model_used']}\n"
             out += f"Cost: ${result['cost_usd']:.4f}\n\n"
@@ -145,7 +145,7 @@ def create_server(config_path: Path | None = None) -> FastMCP:
                 for t in tasks:
                     out += f"  - [{t.get('model_tier', '?')}] {t.get('title', '?')}\n"
 
-            out += f"\nNext: Review the plan, then use start_project to begin execution."
+            out += "\nNext: Review the plan, then use start_project to begin execution."
             return out
         except Exception as e:
             return _fmt_error(e)
@@ -275,7 +275,7 @@ def create_server(config_path: Path | None = None) -> FastMCP:
             task_id = claimable[0]["id"]
             result = await _post(f"/external/tasks/{task_id}/claim")
 
-            out = f"--- Task Claimed ---\n"
+            out = "--- Task Claimed ---\n"
             out += f"ID: {result['id']}\n"
             out += f"Title: {result['title']}\n"
             out += f"Type: {result['task_type']} | Tier: {result['model_tier']}\n"
@@ -298,7 +298,7 @@ def create_server(config_path: Path | None = None) -> FastMCP:
             if result.get('system_prompt'):
                 out += f"\n--- System Prompt ---\n{result['system_prompt']}\n"
 
-            out += f"\nWhen done, use submit_result with the task output."
+            out += "\nWhen done, use submit_result with the task output."
             return out
         except Exception as e:
             return _fmt_error(e)
@@ -312,7 +312,7 @@ def create_server(config_path: Path | None = None) -> FastMCP:
         try:
             result = await _post(f"/external/tasks/{task_id}/claim")
 
-            out = f"--- Task Claimed ---\n"
+            out = "--- Task Claimed ---\n"
             out += f"ID: {result['id']}\n"
             out += f"Title: {result['title']}\n"
             out += f"Type: {result['task_type']} | Tier: {result['model_tier']}\n"
@@ -327,7 +327,7 @@ def create_server(config_path: Path | None = None) -> FastMCP:
                         content = ctx.get('content', '')
                         out += f"  {content[:500]}{'...' if len(content) > 500 else ''}\n\n"
 
-            out += f"\nWhen done, use submit_result with the task output."
+            out += "\nWhen done, use submit_result with the task output."
             return out
         except Exception as e:
             return _fmt_error(e)
@@ -385,7 +385,7 @@ def create_server(config_path: Path | None = None) -> FastMCP:
                 "model_used": model_used,
             })
 
-            out = f"--- Result Submitted ---\n"
+            out = "--- Result Submitted ---\n"
             out += f"Task: {result['task_id']}\n"
             out += f"Status: {result['status']}\n"
 
