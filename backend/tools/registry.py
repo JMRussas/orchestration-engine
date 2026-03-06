@@ -75,6 +75,12 @@ class ToolRegistry:
             from backend.tools.file import WriteFileTool
             return WriteFileTool()
 
+        def _dotnet_reflection():
+            from backend.tools.dotnet_reflection import DotNetReflectionTool, is_dotnet_available
+            if not is_dotnet_available():
+                raise RuntimeError("dotnet CLI not found — skipping DotNetReflectionTool")
+            return DotNetReflectionTool()
+
         tool_factories = [
             ("SearchKnowledgeTool", _search_knowledge),
             ("LookupTypeTool", _lookup_type),
@@ -82,6 +88,7 @@ class ToolRegistry:
             ("GenerateImageTool", _generate_image),
             ("ReadFileTool", _read_file),
             ("WriteFileTool", _write_file),
+            ("DotNetReflectionTool", _dotnet_reflection),
         ]
 
         for name, factory in tool_factories:

@@ -131,6 +131,19 @@ class DecomposerService:
             if files:
                 context.append({"type": "affected_files", "content": ", ".join(files)})
 
+            # C# reflection context: inject typed contracts for method-level tasks
+            target_sig = task_def.get("target_signature")
+            if target_sig:
+                context.append({"type": "target_signature", "content": target_sig})
+            available_methods = task_def.get("available_methods")
+            if available_methods:
+                content = "\n".join(available_methods) if isinstance(available_methods, list) else str(available_methods)
+                context.append({"type": "available_methods", "content": content})
+            ctor_params = task_def.get("constructor_params")
+            if ctor_params:
+                content = ", ".join(ctor_params) if isinstance(ctor_params, list) else str(ctor_params)
+                context.append({"type": "constructor_params", "content": content})
+
             # Requirement traceability
             requirement_ids = task_def.get("requirement_ids", [])
 
@@ -181,6 +194,13 @@ class DecomposerService:
                     (task_ids[i], task_ids[dep_idx]),
                 ))
 
+        # Auto-create assembly tasks for C# method phases
+        # Groups csharp_method tasks by target_class, creates one assembly task per class
+        _create_csharp_assembly_tasks(
+            tasks_data, task_ids, waves, phase_names,
+            project_id, plan_id, now, write_statements,
+        )
+
         # Mark plan as approved
         write_statements.append((
             "UPDATE plans SET status = ? WHERE id = ?",
@@ -211,6 +231,85 @@ class DecomposerService:
 async def decompose_plan(project_id: str, plan_id: str, *, db) -> dict:
     """Convenience wrapper for backward compatibility with tests and direct callers."""
     return await DecomposerService(db=db).decompose(project_id, plan_id)
+
+
+def _create_csharp_assembly_tasks(
+    tasks_data, task_ids, waves, phase_names,
+    project_id, plan_id, now, write_statements,
+):
+    """Auto-create assembly tasks for C# method phases.
+
+    Groups csharp_method tasks by target_class. For each class, creates
+    an assembly task that depends on all its method tasks. The assembly
+    task stitches method bodies into the class file and runs dotnet build.
+    """
+    from collections import defaultdict
+
+    # Group task indices by target_class
+    class_tasks: dict[str, list[int]] = defaultdict(list)
+    for i, task_def in enumerate(tasks_data):
+        if task_def.get("task_type") == "csharp_method" and task_def.get("target_class"):
+            class_tasks[task_def["target_class"]].append(i)
+
+    if not class_tasks:
+        return
+
+    for target_class, method_indices in class_tasks.items():
+        assembly_id = uuid.uuid4().hex[:12]
+        class_name = target_class.split(".")[-1]
+
+        # Collect affected files from method tasks
+        affected = set()
+        for idx in method_indices:
+            for f in tasks_data[idx].get("affected_files", []):
+                affected.add(f)
+
+        # Assembly wave = max wave of its methods + 1
+        assembly_wave = max(waves[i] for i in method_indices) + 1
+
+        description = (
+            f"Assemble method implementations for {target_class} into the class file. "
+            f"Stitch the method bodies from {len(method_indices)} completed tasks into "
+            f"the class shell, then run 'dotnet build' to verify compilation."
+        )
+
+        context = [
+            {"type": "task_description", "content": description},
+            {"type": "target_class", "content": target_class},
+        ]
+        if affected:
+            context.append({"type": "affected_files", "content": ", ".join(sorted(affected))})
+
+        # Get the phase name from the first method task
+        phase = phase_names[method_indices[0]] if method_indices else None
+
+        write_statements.append((
+            "INSERT INTO tasks (id, project_id, plan_id, title, description, task_type, "
+            "priority, status, model_tier, context_json, tools_json, "
+            "max_tokens, wave, phase, requirement_ids_json, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (assembly_id, project_id, plan_id,
+             f"Assemble {class_name}", description, "csharp_assembly",
+             9999, TaskStatus.PENDING, "sonnet",  # high priority number = runs last
+             json.dumps(context), json.dumps(["read_file", "write_file"]),
+             4096, assembly_wave, phase,
+             json.dumps([]), now, now),
+        ))
+
+        # Add dependency edges: assembly depends on all its method tasks
+        for method_idx in method_indices:
+            write_statements.append((
+                "INSERT INTO task_deps (task_id, depends_on) VALUES (?, ?)",
+                (assembly_id, task_ids[method_idx]),
+            ))
+
+        task_ids.append(assembly_id)
+        waves.append(assembly_wave)
+
+    logger.info(
+        "Created %d assembly tasks for C# classes: %s",
+        len(class_tasks), ", ".join(class_tasks.keys()),
+    )
 
 
 def _check_for_cycles(tasks_data: list[dict]) -> None:

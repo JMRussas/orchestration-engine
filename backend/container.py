@@ -76,7 +76,7 @@ class Container(containers.DeclarativeContainer):
     git_service = providers.Factory(GitService, db=db)
 
     # --- Planning & Decomposition ---
-    planner = providers.Factory(PlannerService, db=db, budget=budget)
+    planner = providers.Factory(PlannerService, db=db, budget=budget, tool_registry=tool_registry)
     decomposer = providers.Factory(DecomposerService, db=db)
 
     # --- Executor (depends on all services) ---

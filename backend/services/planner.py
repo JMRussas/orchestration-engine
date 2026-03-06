@@ -6,6 +6,7 @@
 #  Used by:    routes/projects.py, container.py
 
 import json
+import logging
 import time
 import uuid
 
@@ -16,6 +17,8 @@ from backend.exceptions import BudgetExhaustedError, NotFoundError, PlanParseErr
 from backend.models.enums import PlanningRigor, PlanStatus, ProjectStatus
 from backend.services.model_router import calculate_cost
 from backend.utils.json_utils import extract_json_object, parse_requirements
+
+logger = logging.getLogger("orchestration.planner")
 
 # Token estimates for budget reservation before API calls
 _EST_PLANNING_INPUT_TOKENS = 2000   # system prompt (~1.5k) + requirements
@@ -196,12 +199,139 @@ def _build_system_prompt(rigor: PlanningRigor) -> str:
     return _PLANNING_PREAMBLE + _RIGOR_SUFFIXES[rigor]
 
 
+# ---------------------------------------------------------------------------
+# C# Reflection-based decomposition strategy
+# ---------------------------------------------------------------------------
+
+_CSHARP_PLANNING_PREAMBLE = """You are a C# code architect for an AI orchestration engine. Your job is to decompose a feature request into method-level implementation tasks using reflected type metadata from the target assembly.
+
+You will receive:
+1. The feature requirements (numbered [R1], [R2], etc.)
+2. A reflected type map showing existing classes, methods, properties, and constructors from the .NET assembly.
+
+<strategy>
+- Each task implements exactly ONE method body. The method signature is already defined.
+- Tasks are organized into phases, one phase per class being modified or created.
+- Each task receives: the target method signature, injected dependencies (constructor params), and available sibling methods.
+- The AI worker will output ONLY the method body — no class wrapper, no using statements.
+- A final assembly task per class stitches method bodies into the class file and runs dotnet build.
+- Keep each method under 50 lines of logic. If a method needs more, split into private helpers and add those as separate tasks.
+</strategy>
+
+<rules>
+- Use the reflected type map strictly. Do not invent classes or interfaces that don't exist.
+- If a new class is needed, create a "scaffold" task that generates the class shell first.
+- Map depends_on to the task indices (0-based, global across phases) of methods that must complete before this one.
+- For new methods on existing classes, include the existing method signatures in available_methods.
+- For methods that modify shared state, note potential concurrency concerns in the description.
+</rules>
+
+"""
+
+_CSHARP_TASK_SCHEMA = """{
+      "title": "ClassName.MethodName",
+      "description": "What this method does, including behavioral contract and edge cases",
+      "task_type": "csharp_method",
+      "complexity": "simple|medium|complex",
+      "depends_on": [],
+      "target_class": "Namespace.ClassName",
+      "target_signature": "public async Task<bool> MethodName(ParamType param)",
+      "available_methods": ["signatures of other methods in the same class or injected services"],
+      "constructor_params": ["IDbContext db", "ILogger logger"],
+      "requirement_ids": ["R1"],
+      "verification_criteria": "How to verify this method works correctly",
+      "affected_files": ["src/Services/MyService.cs"]
+    }"""
+
+_CSHARP_RIGOR_SUFFIX = f"""Produce a JSON plan organized into phases. Each phase corresponds to one class being modified or created.
+
+{{
+  "summary": "Brief summary of the feature being implemented",
+  "phases": [
+    {{
+      "name": "ClassName (e.g. 'UserService', 'OrderValidator')",
+      "description": "What this class does and why these methods are needed",
+      "tasks": [
+        {_CSHARP_TASK_SCHEMA}
+      ]
+    }}
+  ],
+  "open_questions": [
+    {{
+      "question": "An ambiguity or decision in the requirements",
+      "proposed_answer": "How you propose to handle it",
+      "impact": "What changes if the answer differs"
+    }}
+  ],
+  "assembly_config": {{
+    "new_files": ["Paths to new .cs files that need to be created"],
+    "modified_files": ["Paths to existing .cs files that will be modified"]
+  }}
+}}
+
+Phase guidelines:
+- One phase per class. Phase name = class name.
+- Within a phase, order tasks so independent methods come first.
+- depends_on indices are GLOBAL across all phases (0-based from the first task in the first phase).
+- After all method tasks in a phase, the system will auto-create an assembly task to stitch and build.
+
+Open questions:
+- Surface 1-5 ambiguities about the requirements or existing code structure.
+
+Respond with ONLY the JSON plan, no markdown fences or explanation."""
+
+
+def _build_csharp_system_prompt(type_map: str) -> str:
+    """Build the system prompt for C# reflection-based planning."""
+    return (
+        _CSHARP_PLANNING_PREAMBLE
+        + f"<reflected_types>\n{type_map}\n</reflected_types>\n\n"
+        + _CSHARP_RIGOR_SUFFIX
+    )
+
+
 class PlannerService:
     """Injectable service that generates plans from project requirements."""
 
-    def __init__(self, *, db, budget):
+    def __init__(self, *, db, budget, tool_registry=None):
         self._db = db
         self._budget = budget
+        self._tool_registry = tool_registry
+
+    async def _get_csharp_type_map(self, config: dict) -> str | None:
+        """Run .NET reflection to get the type map for C# planning.
+
+        Reads assembly_path or csproj_path from project config.
+        Returns formatted type map string, or None if reflection fails/unavailable.
+        """
+        assembly_path = config.get("assembly_path")
+        csproj_path = config.get("csproj_path")
+
+        if not assembly_path and not csproj_path:
+            logger.warning("csharp_reflection strategy requires assembly_path or csproj_path in config")
+            return None
+
+        try:
+            from backend.tools.dotnet_reflection import (
+                build_project,
+                format_type_map,
+                reflect_assembly,
+            )
+
+            # Build from csproj if needed
+            if csproj_path and not assembly_path:
+                success, result = await build_project(csproj_path)
+                if not success:
+                    logger.warning("C# build failed: %s", result)
+                    return None
+                assembly_path = result
+
+            ns_filter = config.get("namespace_filter")
+            data = await reflect_assembly(assembly_path, ns_filter)
+            return format_type_map(data)
+        except Exception as e:
+            logger.warning("C# reflection failed, falling back to generic planner: %s", e)
+            return None
 
     async def generate(
         self,
@@ -235,8 +365,18 @@ class PlannerService:
         except ValueError:
             rigor = PlanningRigor.L2
 
-        system_prompt = _build_system_prompt(rigor)
-        max_tokens = _MAX_TOKENS_BY_RIGOR[rigor]
+        # Check for C# reflection decomposition strategy
+        decomposition_strategy = config.get("decomposition_strategy")
+        csharp_type_map = None
+        if decomposition_strategy == "csharp_reflection":
+            csharp_type_map = await self._get_csharp_type_map(config)
+
+        if csharp_type_map is not None:
+            system_prompt = _build_csharp_system_prompt(csharp_type_map)
+            max_tokens = 8192  # C# plans are detailed
+        else:
+            system_prompt = _build_system_prompt(rigor)
+            max_tokens = _MAX_TOKENS_BY_RIGOR[rigor]
 
         # Reserve budget before making the API call (prevents TOCTOU race)
         estimated_cost = calculate_cost(PLANNING_MODEL, _EST_PLANNING_INPUT_TOKENS, _EST_PLANNING_OUTPUT_TOKENS)

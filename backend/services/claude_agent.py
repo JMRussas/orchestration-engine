@@ -17,6 +17,52 @@ from backend.services.model_router import calculate_cost, get_model_id
 logger = logging.getLogger("orchestration.executor")
 
 
+def _extract_csharp_context(context: list[dict]) -> dict | None:
+    """Extract C# method task context entries if present.
+
+    Returns a dict with target_signature, available_methods, constructor_params,
+    or None if this is not a C# method task.
+    """
+    result = {}
+    for ctx in context:
+        ctx_type = ctx.get("type", "")
+        if ctx_type == "target_signature":
+            result["target_signature"] = ctx.get("content", "")
+        elif ctx_type == "available_methods":
+            result["available_methods"] = ctx.get("content", "")
+        elif ctx_type == "constructor_params":
+            result["constructor_params"] = ctx.get("content", "")
+    return result if "target_signature" in result else None
+
+
+def _build_csharp_worker_prompt(csharp_ctx: dict, task_row: dict) -> str:
+    """Build a structured WorkerInstruction prompt for C# method tasks."""
+    signature = csharp_ctx.get("target_signature", "")
+    available = csharp_ctx.get("available_methods", "None")
+    ctor_params = csharp_ctx.get("constructor_params", "None")
+    description = task_row.get("description", "")
+
+    return (
+        "<WorkerInstruction>\n"
+        "  <Context>\n"
+        f"    <TargetSignature>{signature}</TargetSignature>\n"
+        f"    <InjectedDependencies>{ctor_params}</InjectedDependencies>\n"
+        f"    <AvailableMethods>\n{available}\n    </AvailableMethods>\n"
+        "  </Context>\n\n"
+        f"  <LogicGoal>\n{description}\n  </LogicGoal>\n\n"
+        "  <ExecutionRules>\n"
+        "    <Rule>Output ONLY the method body. Do not wrap in a class or add using statements.</Rule>\n"
+        "    <Rule>Use the AvailableMethods strictly. Do not hallucinate helper methods that don't exist.</Rule>\n"
+        "    <Rule>If the LogicGoal requires a method that doesn't exist in AvailableMethods, "
+        "note it clearly in your output so the orchestrator can create it.</Rule>\n"
+        "    <Rule>Keep the implementation under 50 lines. If more is needed, "
+        "split logic into private helpers and note them.</Rule>\n"
+        "  </ExecutionRules>\n\n"
+        "  <OutputConstraint>Return raw C# code only. No markdown formatting blocks.</OutputConstraint>\n"
+        "</WorkerInstruction>"
+    )
+
+
 async def run_claude_task(
     *,
     task_row,
@@ -48,7 +94,14 @@ async def run_claude_task(
 
     # Build context
     context = json.loads(task_row["context_json"]) if task_row["context_json"] else []
-    system_parts = [task_row["system_prompt"] or "You are a focused task executor."]
+
+    # Check for C# method task — uses structured WorkerInstruction prompt
+    csharp_context = _extract_csharp_context(context)
+    if csharp_context:
+        system_parts = [_build_csharp_worker_prompt(csharp_context, task_row)]
+    else:
+        system_parts = [task_row["system_prompt"] or "You are a focused task executor."]
+
     system_parts.append(
         "\n<meta_instructions>\n"
         "If you discover any constraints, gotchas, API quirks, or architectural "
@@ -58,6 +111,8 @@ async def run_claude_task(
     )
     for ctx in context:
         ctx_type = ctx.get("type", "context")
+        if ctx_type in ("target_signature", "available_methods", "constructor_params"):
+            continue  # Already injected into WorkerInstruction
         system_parts.append(f"\n<{ctx_type}>\n{ctx.get('content', '')}\n</{ctx_type}>")
 
     # Inject project knowledge from earlier tasks
