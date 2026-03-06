@@ -76,6 +76,8 @@ async def test_assembly_task_build_failure_resets_to_pending():
     assert params[0] == TaskStatus.PENDING
     assert "verification_status" in sql
     assert params[1] == "failed"
+    assert "claimed_by = NULL" in sql
+    assert "claimed_at = NULL" in sql
     # Build errors injected into context
     new_context = json.loads(params[3])
     feedback_entries = [e for e in new_context if e["type"] == "build_error_feedback"]

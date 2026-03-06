@@ -699,6 +699,7 @@ async def _run_csharp_build_verification(task_row, task_id, db, progress, projec
     await db.execute_write(
         "UPDATE tasks SET status = ?, verification_status = ?, "
         "verification_notes = ?, context_json = ?, "
+        "claimed_by = NULL, claimed_at = NULL, "
         "retry_count = retry_count + 1, updated_at = ? WHERE id = ?",
         (
             TaskStatus.PENDING, "failed", build_output,
