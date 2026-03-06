@@ -599,3 +599,29 @@ async def complete_task_external(
             logger.warning("Knowledge extraction failed for external task %s: %s", task_id, e)
 
     return {"status": TaskStatus.COMPLETED}
+
+
+async def verify_csharp_build(csproj_path: str) -> tuple[bool, str]:
+    """Run dotnet build as a verification step for C# tasks.
+
+    Returns (success, output). On failure, output contains compiler errors
+    suitable for injection as retry feedback.
+    """
+    from backend.tools.dotnet_reflection import _run_subprocess
+
+    code, stdout, stderr = await _run_subprocess(
+        ["dotnet", "build", csproj_path, "-c", "Release", "--nologo", "-v", "q"],
+        timeout=120,
+    )
+    if code == 0:
+        return True, "Build succeeded"
+
+    # Extract just the error lines for concise feedback
+    output = stderr or stdout
+    error_lines = [
+        line for line in output.splitlines()
+        if "error CS" in line or "error :" in line
+    ]
+    if error_lines:
+        return False, "Build errors:\n" + "\n".join(error_lines[:20])
+    return False, f"Build failed:\n{output[:2000]}"
