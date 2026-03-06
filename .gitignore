@@ -20,3 +20,5 @@ frontend/dist/
 *.log
 .claude/settings.local.json
 *.tsbuildinfo
+tools/dotnet-reflector/bin/
+tools/dotnet-reflector/obj/

@@ -6,6 +6,7 @@
 #  Used by:    routes/projects.py, container.py
 
 import json
+import logging
 import time
 import uuid
 
@@ -16,6 +17,8 @@ from backend.exceptions import BudgetExhaustedError, NotFoundError, PlanParseErr
 from backend.models.enums import PlanningRigor, PlanStatus, ProjectStatus
 from backend.services.model_router import calculate_cost
 from backend.utils.json_utils import extract_json_object, parse_requirements
+
+logger = logging.getLogger("orchestration.planner")
 
 # Token estimates for budget reservation before API calls
 _EST_PLANNING_INPUT_TOKENS = 2000   # system prompt (~1.5k) + requirements
@@ -301,9 +304,6 @@ class PlannerService:
         Reads assembly_path or csproj_path from project config.
         Returns formatted type map string, or None if reflection fails/unavailable.
         """
-        import logging
-        logger = logging.getLogger("orchestration.planner")
-
         assembly_path = config.get("assembly_path")
         csproj_path = config.get("csproj_path")
 
