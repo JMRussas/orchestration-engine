@@ -199,6 +199,7 @@ class DecomposerService:
         _create_csharp_assembly_tasks(
             tasks_data, task_ids, waves, phase_names,
             project_id, plan_id, now, write_statements,
+            project_row=project_row,
         )
 
         # Mark plan as approved
@@ -236,6 +237,7 @@ async def decompose_plan(project_id: str, plan_id: str, *, db) -> dict:
 def _create_csharp_assembly_tasks(
     tasks_data, task_ids, waves, phase_names,
     project_id, plan_id, now, write_statements,
+    *, project_row=None,
 ):
     """Auto-create assembly tasks for C# method phases.
 
@@ -253,6 +255,15 @@ def _create_csharp_assembly_tasks(
 
     if not class_tasks:
         return
+
+    # Extract csproj_path from project config for build verification
+    csproj_path = None
+    if project_row:
+        try:
+            config = json.loads(project_row["config_json"] or "{}")
+            csproj_path = config.get("csproj_path")
+        except (json.JSONDecodeError, TypeError, KeyError):
+            pass
 
     for target_class, method_indices in class_tasks.items():
         assembly_id = uuid.uuid4().hex[:12]
@@ -277,6 +288,8 @@ def _create_csharp_assembly_tasks(
             {"type": "task_description", "content": description},
             {"type": "target_class", "content": target_class},
         ]
+        if csproj_path:
+            context.append({"type": "csproj_path", "content": csproj_path})
         if affected:
             context.append({"type": "affected_files", "content": ", ".join(sorted(affected))})
 
