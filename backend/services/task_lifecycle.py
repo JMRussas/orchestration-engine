@@ -22,6 +22,7 @@ import httpx
 from backend.config import (
     CHECKPOINT_ON_RETRY_EXHAUSTED,
     CONTEXT_FORWARD_MAX_CHARS,
+    CSHARP_BUILD_VERIFY_ENABLED,
     DIAGNOSTIC_RAG_ENABLED,
     KNOWLEDGE_EXTRACTION_ENABLED,
     VERIFICATION_ENABLED,
@@ -390,6 +391,12 @@ async def execute_task(
                     ),
                 )
 
+                # C# build verification for assembly tasks
+                if await _run_csharp_build_verification(
+                    task_row, task_id, db, progress, project_id,
+                ):
+                    return  # Task reset to PENDING with build error feedback
+
                 # Optional output verification (skip for Ollama — free tasks)
                 # Run BEFORE forwarding context to prevent dependents from
                 # receiving output that verification may reject.
@@ -569,6 +576,12 @@ async def complete_task_external(
         ),
     )
 
+    # C# build verification for assembly tasks
+    if await _run_csharp_build_verification(
+        task_row, task_id, db, progress, project_id,
+    ):
+        return {"status": TaskStatus.PENDING, "build_failed": True}
+
     await progress.push_event(
         project_id, "task_complete", task_row["title"],
         task_id=task_id, cost_usd=cost_usd,
@@ -625,3 +638,81 @@ async def verify_csharp_build(csproj_path: str) -> tuple[bool, str]:
     if error_lines:
         return False, "Build errors:\n" + "\n".join(error_lines[:20])
     return False, f"Build failed:\n{output[:2000]}"
+
+
+async def _run_csharp_build_verification(task_row, task_id, db, progress, project_id):
+    """Run C# build verification for csharp_assembly tasks.
+
+    Returns True if the task was reset (caller should return early).
+    Returns False if verification passed or was skipped.
+    """
+    if not CSHARP_BUILD_VERIFY_ENABLED:
+        return False
+    try:
+        task_type = task_row["task_type"]
+    except (KeyError, IndexError):
+        return False
+    if task_type != "csharp_assembly":
+        return False
+
+    # Extract csproj_path from task context
+    csproj_path = None
+    try:
+        raw = task_row["context_json"] if "context_json" in task_row.keys() else None
+        ctx = json.loads(raw or "[]")
+        for entry in ctx:
+            if entry.get("type") == "csproj_path":
+                csproj_path = entry["content"]
+                break
+    except (json.JSONDecodeError, TypeError, KeyError):
+        pass
+
+    if not csproj_path:
+        logger.warning(
+            "Skipping C# build verification for task %s: no csproj_path in context",
+            task_id,
+        )
+        return False
+
+    success, build_output = await verify_csharp_build(csproj_path)
+    now = time.time()
+
+    if success:
+        await db.execute_write(
+            "UPDATE tasks SET verification_status = ?, verification_notes = ?, "
+            "updated_at = ? WHERE id = ?",
+            ("passed", "Build succeeded", now, task_id),
+        )
+        return False
+
+    # Build failed — reset to PENDING with build errors as feedback
+    try:
+        retry_count = task_row["retry_count"]
+    except (KeyError, IndexError):
+        retry_count = 0
+    try:
+        ctx = json.loads(task_row["context_json"] or "[]")
+    except (KeyError, IndexError, json.JSONDecodeError, TypeError):
+        ctx = []
+    ctx.append({"type": "build_error_feedback", "content": build_output})
+
+    await db.execute_write(
+        "UPDATE tasks SET status = ?, verification_status = ?, "
+        "verification_notes = ?, context_json = ?, "
+        "claimed_by = NULL, claimed_at = NULL, "
+        "retry_count = retry_count + 1, updated_at = ? WHERE id = ?",
+        (
+            TaskStatus.PENDING, "failed", build_output,
+            json.dumps(ctx), now, task_id,
+        ),
+    )
+    await progress.push_event(
+        project_id, "task_verification_retry",
+        f"{task_row['title']}: build failed, retrying with error feedback",
+        task_id=task_id,
+    )
+    logger.info(
+        "C# build verification failed for task %s (retry %d): %s",
+        task_id, retry_count + 1, build_output[:200],
+    )
+    return True

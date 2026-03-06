@@ -79,6 +79,7 @@
     "knowledge_extraction_max_tokens": 1024,
     "knowledge_injection_max_chars": 3000,
     "knowledge_min_output_length": 200,
+    "csharp_build_verify": true,
     "max_history_rounds": 4,
     "http_client_timeout": 300.0,
     "external_claim_timeout_seconds": 3600

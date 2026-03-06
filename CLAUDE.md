@@ -108,7 +108,7 @@ docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 - **Traceability**: requirements numbered [R1], [R2], mapped to tasks; coverage endpoint shows gaps
 - **External execution**: MCP server (`backend/mcp/server.py`) for Claude Code integration. Execution modes: auto (engine-only), hybrid (Ollama internal, Claude external), external (all external). Tasks claimed atomically via CAS, results submitted with cost tracking.
 - **Git integration**: optional per-project (`repo_path` nullable). `GitService` wraps subprocess via `asyncio.to_thread()`. Config in `git.*` section. Phase 1 (foundation) complete; execution wiring (Phase 2+) pending.
-- **Tests**: Backend: pytest-asyncio (auto mode), 731 tests. Frontend: vitest + @testing-library/react, 137 tests. Load tests: 7 (excluded from CI via `slow` marker)
+- **Tests**: Backend: pytest-asyncio (auto mode), 785 tests. Frontend: vitest + @testing-library/react, 137 tests. Load tests: 7 (excluded from CI via `slow` marker)
 
 ## Git Workflow
 
