@@ -28,6 +28,7 @@ from backend.models.schemas import (
     TaskResultSubmission,
     TaskResultResponse,
 )
+from backend.config import EXTERNAL_CLAIM_TIMEOUT_SECONDS
 from backend.services.budget import BudgetManager
 from backend.services.progress import ProgressManager
 from backend.services.task_lifecycle import (
@@ -37,6 +38,20 @@ from backend.services.task_lifecycle import (
 logger = logging.getLogger("orchestration.external")
 
 router = APIRouter(prefix="/external", tags=["external"])
+
+
+async def _release_stale_claims(project_id: str, db: Database) -> int:
+    """Release tasks whose claim has timed out back to pending."""
+    cutoff = time.time() - EXTERNAL_CLAIM_TIMEOUT_SECONDS
+    cursor = await db.execute_write(
+        "UPDATE tasks SET status = ?, claimed_by = NULL, claimed_at = NULL, "
+        "started_at = NULL, updated_at = ? "
+        "WHERE project_id = ? AND status = ? AND claimed_at IS NOT NULL AND claimed_at < ?",
+        (TaskStatus.PENDING, time.time(), project_id, TaskStatus.RUNNING, cutoff),
+    )
+    if cursor.rowcount > 0:
+        logger.info("Released %d stale claimed tasks in project %s", cursor.rowcount, project_id)
+    return cursor.rowcount
 
 
 async def _get_owned_project(project_id: str, user: dict, db: Database) -> dict:
@@ -73,6 +88,9 @@ async def list_claimable_tasks(
 
     if execution_mode == ExecutionMode.AUTO:
         return []  # Auto mode — engine handles everything
+
+    # Release timed-out claims so they become claimable again
+    await _release_stale_claims(project_id, db)
 
     # Determine current wave
     _TERMINAL = (TaskStatus.COMPLETED, TaskStatus.FAILED,

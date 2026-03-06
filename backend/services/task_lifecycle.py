@@ -544,12 +544,20 @@ async def complete_task_external(
     # Calculate cost from tokens
     cost_usd = calculate_cost(model_used, prompt_tokens, completion_tokens)
 
+    # Infer provider from model name
+    if "claude" in model_used.lower():
+        provider = "anthropic"
+    elif any(k in model_used.lower() for k in ("gpt", "o1", "o3", "o4")):
+        provider = "openai"
+    else:
+        provider = "external"
+
     # Record spend
     await budget.record_spend(
         cost_usd=cost_usd,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
-        provider="anthropic",
+        provider=provider,
         model=model_used,
         project_id=project_id,
         task_id=task_id,
@@ -582,19 +590,18 @@ async def complete_task_external(
     # Extract knowledge (best-effort, non-blocking)
     if KNOWLEDGE_EXTRACTION_ENABLED:
         try:
-            import anthropic as anthropic_mod
-            client = anthropic_mod.AsyncAnthropic()
             from backend.services.knowledge_extractor import extract_knowledge
-            await extract_knowledge(
-                task_title=task_row["title"],
-                task_description=task_row["description"],
-                output_text=output_text,
-                client=client,
-                budget=budget,
-                project_id=project_id,
-                task_id=task_id,
-                db=db,
-            )
+            async with anthropic.AsyncAnthropic() as ke_client:
+                await extract_knowledge(
+                    task_title=task_row["title"],
+                    task_description=task_row["description"],
+                    output_text=output_text,
+                    client=ke_client,
+                    budget=budget,
+                    project_id=project_id,
+                    task_id=task_id,
+                    db=db,
+                )
         except Exception as e:
             logger.warning("Knowledge extraction failed for external task %s: %s", task_id, e)
 
