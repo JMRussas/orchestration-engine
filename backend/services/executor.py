@@ -19,6 +19,7 @@ import anthropic
 
 from backend.config import (
     ANTHROPIC_API_KEY,
+    EXTERNAL_CLAIM_TIMEOUT_SECONDS,
     MAX_CONCURRENT_TASKS,
     RESOURCE_SKIP_SECONDS,
     SHUTDOWN_GRACE_SECONDS,
@@ -174,8 +175,47 @@ class Executor:
                 )
         logger.info("Recovered %d stale task(s) to pending/blocked", len(stale))
 
+    async def _recover_stale_external_claims(self):
+        """Release externally-claimed tasks that exceeded the claim timeout.
+
+        Runs every tick. Only affects tasks with claimed_by set (external),
+        not internally-dispatched RUNNING tasks.
+        """
+        cutoff = time.time() - EXTERNAL_CLAIM_TIMEOUT_SECONDS
+        stale = await self._db.fetchall(
+            "SELECT id, title, project_id, retry_count FROM tasks "
+            "WHERE status = ? AND claimed_by IS NOT NULL AND claimed_at < ?",
+            (TaskStatus.RUNNING, cutoff),
+        )
+        if not stale:
+            return
+
+        now = time.time()
+        for row in stale:
+            await self._db.execute_write(
+                "UPDATE tasks SET status = ?, claimed_by = NULL, claimed_at = NULL, "
+                "retry_count = retry_count + 1, "
+                "error = ?, updated_at = ? WHERE id = ?",
+                (
+                    TaskStatus.PENDING,
+                    f"External claim timed out after {EXTERNAL_CLAIM_TIMEOUT_SECONDS}s "
+                    f"(retry {row['retry_count'] + 1})",
+                    now, row["id"],
+                ),
+            )
+            await self._progress.push_event(
+                row["project_id"], "task_retry",
+                f"{row['title']}: external claim timed out, returning to queue",
+                task_id=row["id"],
+            )
+        logger.warning(
+            "Recovered %d stale external claim(s)", len(stale),
+        )
+
     async def _tick(self):
         """One executor tick: find ready tasks and dispatch them."""
+        await self._recover_stale_external_claims()
+
         # Find projects that are executing
         projects = await self._db.fetchall(
             "SELECT id FROM projects WHERE status = ?",
