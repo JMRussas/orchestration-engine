@@ -35,6 +35,15 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _parse_plan_from_row(row) -> dict:
+    """Parse plan data from a DB row, preferring plan_xml over plan_json."""
+    plan_xml_raw = row["plan_xml"]
+    if plan_xml_raw:
+        from backend.utils.xml_utils import parse_plan_xml
+        return parse_plan_xml(plan_xml_raw)
+    return json.loads(row["plan_json"])
+
+
 async def _row_to_project(
     row, db: Database,
     include_task_summary: bool = False,
@@ -298,7 +307,8 @@ async def list_plans(
             prompt_tokens=r["prompt_tokens"],
             completion_tokens=r["completion_tokens"],
             cost_usd=r["cost_usd"],
-            plan=json.loads(r["plan_json"]),
+            plan=_parse_plan_from_row(r),
+            plan_xml=r["plan_xml"],
             status=r["status"],
             created_at=r["created_at"],
         )
@@ -438,9 +448,10 @@ async def clone_project(
             new_plan_id = uuid.uuid4().hex[:12]
             await db.execute_write(
                 "INSERT INTO plans (id, project_id, version, model_used, prompt_tokens, "
-                "completion_tokens, cost_usd, plan_json, status, created_at) "
-                "VALUES (?, ?, 1, ?, 0, 0, 0.0, ?, 'draft', ?)",
-                (new_plan_id, new_project_id, plan_row["model_used"], plan_row["plan_json"], now),
+                "completion_tokens, cost_usd, plan_json, plan_xml, status, created_at) "
+                "VALUES (?, ?, 1, ?, 0, 0, 0.0, ?, ?, 'draft', ?)",
+                (new_plan_id, new_project_id, plan_row["model_used"],
+                 plan_row["plan_json"], plan_row["plan_xml"], now),
             )
 
         # 3. Clone tasks (reset status, clear output/cost/retry)
@@ -512,8 +523,8 @@ async def export_project(
         {
             "id": p["id"], "version": p["version"], "model_used": p["model_used"],
             "prompt_tokens": p["prompt_tokens"], "completion_tokens": p["completion_tokens"],
-            "cost_usd": p["cost_usd"], "plan": json.loads(p["plan_json"]),
-            "status": p["status"], "created_at": p["created_at"],
+            "cost_usd": p["cost_usd"], "plan": _parse_plan_from_row(p),
+            "plan_xml": p["plan_xml"], "status": p["status"], "created_at": p["created_at"],
         }
         for p in plan_rows
     ]

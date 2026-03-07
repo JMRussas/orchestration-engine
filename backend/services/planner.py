@@ -17,6 +17,7 @@ from backend.exceptions import BudgetExhaustedError, NotFoundError, PlanParseErr
 from backend.models.enums import PlanningRigor, PlanStatus, ProjectStatus
 from backend.services.model_router import calculate_cost
 from backend.utils.json_utils import extract_json_object, parse_requirements
+from backend.utils.xml_utils import extract_xml_plan, parse_plan_xml
 
 logger = logging.getLogger("orchestration.planner")
 
@@ -71,110 +72,128 @@ Requirements are numbered [R1], [R2], etc. for traceability.
 
 """
 
-_TASK_SCHEMA = """{
-      "title": "Short task title",
-      "description": "Detailed description...",
-      "task_type": "code|research|analysis|asset|integration|documentation",
-      "complexity": "simple|medium|complex",
-      "depends_on": [],
-      "tools_needed": ["search_knowledge", "lookup_type", "local_llm", "generate_image", "read_file", "write_file"],
-      "requirement_ids": ["R1", "R3"],
-      "verification_criteria": "How to verify this task was completed correctly",
-      "affected_files": ["src/auth.ts", "db/schema.sql"]
-    }"""
+_TASK_SCHEMA_XML = """    <task index="0">
+      <title>Short task title</title>
+      <description>Detailed description of what this task does</description>
+      <task_type>code</task_type>
+      <complexity>medium</complexity>
+      <depends_on></depends_on>
+      <tools_needed>search_knowledge,read_file,write_file</tools_needed>
+      <requirement_ids>R1,R3</requirement_ids>
+      <verification_criteria>How to verify this task was completed correctly</verification_criteria>
+      <affected_files>src/auth.ts,db/schema.sql</affected_files>
+    </task>"""
 
-_RIGOR_SUFFIX_L1 = f"""Produce a JSON plan with this exact structure:
-{{
-  "summary": "Brief summary of what will be built",
-  "tasks": [
-    {_TASK_SCHEMA}
-  ]
-}}
+_RIGOR_SUFFIX_L1 = f"""Produce an XML plan with this exact structure:
 
+<plan level="L1">
+  <summary>Brief summary of what will be built</summary>
+  <tasks>
+{_TASK_SCHEMA_XML}
+  </tasks>
+</plan>
+
+Task field notes:
+- task_type: code|research|analysis|asset|integration|documentation
+- complexity: simple|medium|complex
+- depends_on: comma-separated 0-based task indices (empty if no dependencies)
+- tools_needed: comma-separated from: search_knowledge, lookup_type, local_llm, generate_image, read_file, write_file
+- requirement_ids: comma-separated (e.g. R1,R3)
+- affected_files: comma-separated file paths
 - Aim for 3-15 tasks. Too few means tasks are too large; too many means overhead.
+- Use XML entities for special characters in descriptions: &lt; &gt; &amp;
 
-Respond with ONLY the JSON plan, no markdown fences or explanation."""
+Respond with ONLY the XML plan, no markdown fences or explanation."""
 
-_RIGOR_SUFFIX_L2 = f"""Produce a JSON plan organized into phases. Each phase groups related tasks into a logical stage of work.
+_RIGOR_SUFFIX_L2 = f"""Produce an XML plan organized into phases. Each phase groups related tasks into a logical stage of work.
 
-{{
-  "summary": "Brief summary of what will be built",
-  "phases": [
-    {{
-      "name": "Phase name (e.g. 'Foundation', 'Core Logic', 'Integration')",
-      "description": "What this phase accomplishes and why it comes at this point",
-      "tasks": [
-        {_TASK_SCHEMA}
-      ]
-    }}
-  ],
-  "open_questions": [
-    {{
-      "question": "An ambiguity or decision in the requirements",
-      "proposed_answer": "How you propose to handle it",
-      "impact": "What changes if the answer differs"
-    }}
-  ]
-}}
+<plan level="L2">
+  <summary>Brief summary of what will be built</summary>
+  <phases>
+    <phase name="Foundation">
+      <description>What this phase accomplishes and why it comes at this point</description>
+{_TASK_SCHEMA_XML}
+    </phase>
+  </phases>
+  <questions>
+    <question>
+      <ask>An ambiguity or decision in the requirements</ask>
+      <proposed>How you propose to handle it</proposed>
+      <impact>What changes if the answer differs</impact>
+    </question>
+  </questions>
+</plan>
+
+Task field notes:
+- task_type: code|research|analysis|asset|integration|documentation
+- complexity: simple|medium|complex
+- depends_on: comma-separated 0-based task indices, GLOBAL across all phases (empty if none)
+- tools_needed: comma-separated from: search_knowledge, lookup_type, local_llm, generate_image, read_file, write_file
+- requirement_ids: comma-separated (e.g. R1,R3)
+- affected_files: comma-separated file paths
+- Use XML entities for special characters in descriptions: &lt; &gt; &amp;
 
 Phase guidelines:
 - Group related tasks into 2-5 phases that represent logical stages of work.
 - Name phases clearly: "Research & Discovery", "Core Implementation", "Integration & Testing", etc.
 - Earlier phases should have no dependencies on later phases.
-- depends_on indices are GLOBAL across all phases (0-based from the first task in the first phase).
 - Aim for 3-15 total tasks across all phases.
 
 Open questions:
 - Surface 1-5 ambiguities, assumptions, or decisions that could affect the plan.
-- Each must include a proposed_answer so the user can approve or override quickly.
+- Each must include a proposed answer so the user can approve or override quickly.
 
-Respond with ONLY the JSON plan, no markdown fences or explanation."""
+Respond with ONLY the XML plan, no markdown fences or explanation."""
 
-_RIGOR_SUFFIX_L3 = f"""Produce a thorough JSON plan organized into phases with risk analysis and test strategy.
+_RIGOR_SUFFIX_L3 = f"""Produce a thorough XML plan organized into phases with risk analysis and test strategy.
 
-{{
-  "summary": "Brief summary of what will be built",
-  "phases": [
-    {{
-      "name": "Phase name (e.g. 'Foundation', 'Core Logic', 'Integration')",
-      "description": "What this phase accomplishes and why it comes at this point",
-      "tasks": [
-        {_TASK_SCHEMA}
-      ]
-    }}
-  ],
-  "open_questions": [
-    {{
-      "question": "An ambiguity or decision in the requirements",
-      "proposed_answer": "How you propose to handle it",
-      "impact": "What changes if the answer differs"
-    }}
-  ],
-  "risk_assessment": [
-    {{
-      "risk": "Description of a technical or schedule risk",
-      "likelihood": "low|medium|high",
-      "impact": "low|medium|high",
-      "mitigation": "How to reduce or handle this risk"
-    }}
-  ],
-  "test_strategy": {{
-    "approach": "Overall testing approach description",
-    "test_tasks": ["Task titles that represent test/verification work"],
-    "coverage_notes": "What areas need testing and how"
-  }}
-}}
+<plan level="L3">
+  <summary>Brief summary of what will be built</summary>
+  <phases>
+    <phase name="Foundation">
+      <description>What this phase accomplishes</description>
+{_TASK_SCHEMA_XML}
+    </phase>
+  </phases>
+  <questions>
+    <question>
+      <ask>An ambiguity or decision in the requirements</ask>
+      <proposed>How you propose to handle it</proposed>
+      <impact>What changes if the answer differs</impact>
+    </question>
+  </questions>
+  <risks>
+    <risk>
+      <description>Description of a technical or schedule risk</description>
+      <likelihood>medium</likelihood>
+      <impact>high</impact>
+      <mitigation>How to reduce or handle this risk</mitigation>
+    </risk>
+  </risks>
+  <test_strategy>
+    <approach>Overall testing approach description</approach>
+    <test_tasks>Task title 1,Task title 2</test_tasks>
+    <coverage_notes>What areas need testing and how</coverage_notes>
+  </test_strategy>
+</plan>
+
+Task field notes:
+- task_type: code|research|analysis|asset|integration|documentation
+- complexity: simple|medium|complex
+- depends_on: comma-separated 0-based task indices, GLOBAL across all phases (empty if none)
+- tools_needed: comma-separated from: search_knowledge, lookup_type, local_llm, generate_image, read_file, write_file
+- requirement_ids: comma-separated (e.g. R1,R3)
+- affected_files: comma-separated file paths
+- Use XML entities for special characters in descriptions: &lt; &gt; &amp;
 
 Phase guidelines:
 - Group related tasks into 2-5 phases that represent logical stages of work.
 - Name phases clearly: "Research & Discovery", "Core Implementation", "Integration & Testing", etc.
 - Earlier phases should have no dependencies on later phases.
-- depends_on indices are GLOBAL across all phases (0-based from the first task in the first phase).
 - Aim for 5-15 total tasks across all phases.
 
 Open questions:
 - Surface 1-5 ambiguities, assumptions, or decisions that could affect the plan.
-- Each must include a proposed_answer so the user can approve or override quickly.
 
 Risk assessment:
 - Identify 2-5 technical, integration, or scope risks.
@@ -185,7 +204,7 @@ Test strategy:
 - Reference specific tasks that perform testing/verification.
 - Note coverage gaps the user should be aware of.
 
-You may optionally begin your response with a <thinking> block to reason through dependencies, risks, and trade-offs before producing the plan. After your reasoning (if any), output the JSON plan with no markdown fences."""
+You may optionally begin your response with a <thinking> block to reason through the plan before producing it. After your reasoning (if any), output the XML plan."""
 
 _RIGOR_SUFFIXES = {
     PlanningRigor.L1: _RIGOR_SUFFIX_L1,
@@ -228,57 +247,63 @@ You will receive:
 
 """
 
-_CSHARP_TASK_SCHEMA = """{
-      "title": "ClassName.MethodName",
-      "description": "What this method does, including behavioral contract and edge cases",
-      "task_type": "csharp_method",
-      "complexity": "simple|medium|complex",
-      "depends_on": [],
-      "target_class": "Namespace.ClassName",
-      "target_signature": "public async Task<bool> MethodName(ParamType param)",
-      "available_methods": ["signatures of other methods in the same class or injected services"],
-      "constructor_params": ["IDbContext db", "ILogger logger"],
-      "requirement_ids": ["R1"],
-      "verification_criteria": "How to verify this method works correctly",
-      "affected_files": ["src/Services/MyService.cs"]
-    }"""
+_CSHARP_TASK_SCHEMA_XML = """    <task index="0">
+      <title>ClassName.MethodName</title>
+      <description>What this method does, including behavioral contract and edge cases</description>
+      <task_type>csharp_method</task_type>
+      <complexity>medium</complexity>
+      <depends_on></depends_on>
+      <target_class>Namespace.ClassName</target_class>
+      <target_signature>public async Task&lt;bool&gt; MethodName(ParamType param)</target_signature>
+      <available_methods>signatures of other methods in the same class</available_methods>
+      <constructor_params>IDbContext db,ILogger logger</constructor_params>
+      <requirement_ids>R1</requirement_ids>
+      <verification_criteria>How to verify this method works correctly</verification_criteria>
+      <affected_files>src/Services/MyService.cs</affected_files>
+    </task>"""
 
-_CSHARP_RIGOR_SUFFIX = f"""Produce a JSON plan organized into phases. Each phase corresponds to one class being modified or created.
+_CSHARP_RIGOR_SUFFIX = f"""Produce an XML plan organized into phases. Each phase corresponds to one class being modified or created.
 
-{{
-  "summary": "Brief summary of the feature being implemented",
-  "phases": [
-    {{
-      "name": "ClassName (e.g. 'UserService', 'OrderValidator')",
-      "description": "What this class does and why these methods are needed",
-      "tasks": [
-        {_CSHARP_TASK_SCHEMA}
-      ]
-    }}
-  ],
-  "open_questions": [
-    {{
-      "question": "An ambiguity or decision in the requirements",
-      "proposed_answer": "How you propose to handle it",
-      "impact": "What changes if the answer differs"
-    }}
-  ],
-  "assembly_config": {{
-    "new_files": ["Paths to new .cs files that need to be created"],
-    "modified_files": ["Paths to existing .cs files that will be modified"]
-  }}
-}}
+<plan level="csharp">
+  <summary>Brief summary of the feature being implemented</summary>
+  <phases>
+    <phase name="ClassName">
+      <description>What this class does and why these methods are needed</description>
+{_CSHARP_TASK_SCHEMA_XML}
+    </phase>
+  </phases>
+  <questions>
+    <question>
+      <ask>An ambiguity or decision in the requirements</ask>
+      <proposed>How you propose to handle it</proposed>
+      <impact>What changes if the answer differs</impact>
+    </question>
+  </questions>
+  <assembly_config>
+    <new_files>path/to/NewFile.cs</new_files>
+    <modified_files>path/to/ExistingFile.cs</modified_files>
+  </assembly_config>
+</plan>
+
+Task field notes:
+- task_type is always csharp_method for method-level tasks
+- complexity: simple|medium|complex
+- depends_on: comma-separated 0-based task indices, GLOBAL across all phases
+- target_class: full namespace-qualified class name
+- target_signature: exact method signature (use &lt; &gt; for generics)
+- available_methods: comma-separated signatures of other methods in the class
+- constructor_params: comma-separated injected dependencies
+- Use XML entities for special characters: &lt; &gt; &amp;
 
 Phase guidelines:
 - One phase per class. Phase name = class name.
 - Within a phase, order tasks so independent methods come first.
-- depends_on indices are GLOBAL across all phases (0-based from the first task in the first phase).
 - After all method tasks in a phase, the system will auto-create an assembly task to stitch and build.
 
 Open questions:
 - Surface 1-5 ambiguities about the requirements or existing code structure.
 
-Respond with ONLY the JSON plan, no markdown fences or explanation."""
+Respond with ONLY the XML plan, no markdown fences or explanation."""
 
 
 def _build_csharp_system_prompt(type_map: str) -> str:
@@ -421,16 +446,23 @@ class PlannerService:
             completion_tokens = response.usage.output_tokens
             cost = calculate_cost(PLANNING_MODEL, prompt_tokens, completion_tokens)
 
-            # Parse the plan JSON
-            try:
-                plan_data = json.loads(response_text)
-            except json.JSONDecodeError:
-                # Try to extract JSON from the response (in case of markdown fences).
-                # Use a balanced-brace approach to find the outermost JSON object,
-                # instead of a greedy regex that could match too much.
-                plan_data = extract_json_object(response_text)
-                if plan_data is None:
-                    raise PlanParseError("Failed to parse plan JSON from Claude response")
+            # Parse the plan (XML primary, JSON fallback)
+            plan_xml_str = extract_xml_plan(response_text)
+            if plan_xml_str:
+                try:
+                    plan_data = parse_plan_xml(plan_xml_str)
+                except Exception as xml_err:
+                    logger.warning("XML plan parse failed, trying JSON fallback: %s", xml_err)
+                    plan_xml_str = None  # Clear so we don't store bad XML
+
+            if not plan_xml_str:
+                # Fallback: try JSON (backward compat or if Claude ignored XML instruction)
+                try:
+                    plan_data = json.loads(response_text)
+                except json.JSONDecodeError:
+                    plan_data = extract_json_object(response_text)
+                    if plan_data is None:
+                        raise PlanParseError("Failed to parse plan from Claude response")
 
         except Exception:
             # Record actual API spend even if parsing failed — prevents budget leak
@@ -476,10 +508,11 @@ class PlannerService:
         now = time.time()
         await db.execute_write(
             "INSERT INTO plans (id, project_id, version, model_used, prompt_tokens, "
-            "completion_tokens, cost_usd, plan_json, status, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "completion_tokens, cost_usd, plan_json, plan_xml, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (plan_id, project_id, version, PLANNING_MODEL, prompt_tokens,
-             completion_tokens, cost, json.dumps(plan_data), PlanStatus.DRAFT, now),
+             completion_tokens, cost, json.dumps(plan_data), plan_xml_str,
+             PlanStatus.DRAFT, now),
         )
 
         # Record spending and release reservation

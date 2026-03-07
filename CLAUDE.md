@@ -69,6 +69,7 @@ docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 | `backend/services/git_service.py` | Stateless git operations via subprocess + asyncio.to_thread |
 | `backend/services/resource_monitor.py` | Health checks (Ollama, ComfyUI, Claude) |
 | `backend/services/progress.py` | SSE broadcast, event persistence |
+| `backend/utils/xml_utils.py` | XML plan extraction and parsing (extract_xml_plan, parse_plan_xml) |
 | `backend/tools/registry.py` | Injectable `ToolRegistry` class |
 | `backend/tools/` | Tool implementations (RAG, Ollama, ComfyUI, file) |
 | `frontend/` | React 19 + TypeScript + Vite UI (ErrorBoundary, 404 page) |
@@ -93,6 +94,7 @@ docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 - **Auth**: JWT Bearer tokens for REST, API keys (`orch_` prefix) for MCP/external executors, short-lived SSE tokens for EventSource. First registered user becomes admin.
 - **Ownership**: projects have `owner_id`. Users see/modify only their own projects. Admins can access all.
 - **Budget**: every API call recorded in `usage_log`, checked against limits before execution. Budget endpoints are admin-only.
+- **Plans**: XML format (source of truth in `plan_xml` column). Dual-column: `plan_xml` + `plan_json` for backward compat. Decomposer/routes prefer XML with JSON fallback. Planner has JSON fallback if Claude returns JSON despite XML prompt.
 - **Models**: Ollama (free) for simple tasks, Haiku ($) for medium, Sonnet ($$) for complex
 - **Tools**: registered in `ToolRegistry` class, injected via DI container
 - **SSE**: short-lived token via `POST /api/events/{project_id}/token`, then stream via `GET /api/events/{project_id}?token=...`
@@ -108,7 +110,7 @@ docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 - **Traceability**: requirements numbered [R1], [R2], mapped to tasks; coverage endpoint shows gaps
 - **External execution**: MCP server (`backend/mcp/server.py`) for Claude Code integration. Execution modes: auto (engine-only), hybrid (Ollama internal, Claude external), external (all external). Tasks claimed atomically via CAS, results submitted with cost tracking.
 - **Git integration**: optional per-project (`repo_path` nullable). `GitService` wraps subprocess via `asyncio.to_thread()`. Config in `git.*` section. Phase 1 (foundation) complete; execution wiring (Phase 2+) pending.
-- **Tests**: Backend: pytest-asyncio (auto mode), 731 tests. Frontend: vitest + @testing-library/react, 137 tests. Load tests: 7 (excluded from CI via `slow` marker)
+- **Tests**: Backend: pytest-asyncio (auto mode), 797 tests. Frontend: vitest + @testing-library/react, 137 tests. Load tests: 7 (excluded from CI via `slow` marker)
 
 ## Git Workflow
 

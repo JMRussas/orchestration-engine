@@ -63,6 +63,7 @@ plans = Table(
     Column("completion_tokens", Integer, nullable=False, server_default="0"),
     Column("cost_usd", Float, nullable=False, server_default="0.0"),
     Column("plan_json", Text, nullable=False),
+    Column("plan_xml", Text, nullable=True),
     Column("status", Text, nullable=False, server_default="draft"),
     Column("created_at", Float, nullable=False),
 )
