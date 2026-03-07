@@ -51,33 +51,36 @@ async def _call_cli(provider: str, system_prompt: str, user_message: str,
                     model: Optional[str] = None) -> LLMResponse:
     """Call a CLI provider with system prompt and user message.
 
-    Combines system_prompt + user_message into a single prompt since CLIs
-    don't natively support separate system/user roles.
+    Pipes the prompt via stdin to avoid Windows command line length limits.
+    All CLIs support reading prompts from stdin.
     """
     full_prompt = f"{system_prompt}\n\n---\n\n{user_message}"
 
     if provider == "claude":
-        cmd_args = [_resolve_cmd("claude"), "-p", full_prompt, "--output-format", "text"]
+        # Claude: -p is --print (non-interactive mode), reads prompt from stdin
+        cmd_args = [_resolve_cmd("claude"), "-p", "--output-format", "text"]
     elif provider == "codex":
         cmd_args = [_resolve_cmd("codex"), "exec"]
         if model:
             cmd_args.extend(["--model", model])
-        cmd_args.extend(["--", full_prompt])
     elif provider == "gemini":
-        cmd_args = [_resolve_cmd("gemini")]
+        # Gemini: -p "" triggers non-interactive mode, stdin is prepended to prompt
+        cmd_args = [_resolve_cmd("gemini"), "-p", ""]
         if model:
             cmd_args.extend(["-m", model])
-        cmd_args.extend(["-p", full_prompt])
     else:
         raise ValueError(f"Unknown CLI provider: {provider}")
 
     proc = await asyncio.create_subprocess_exec(
         *cmd_args,
+        stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
 
-    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+    stdout, stderr = await asyncio.wait_for(
+        proc.communicate(input=full_prompt.encode()), timeout=300,
+    )
     stdout_text = stdout.decode().strip()
     stderr_text = stderr.decode().strip()
 
