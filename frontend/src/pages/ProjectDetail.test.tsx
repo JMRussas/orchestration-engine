@@ -315,7 +315,7 @@ describe('ProjectDetail', () => {
     setupDefaultMocks({ status: 'ready' }, [makePlan({ status: 'approved' })])
     renderProjectDetail()
     expect(await screen.findByText('Test plan summary')).toBeInTheDocument()
-    expect(screen.getByText(/Plan v1/)).toBeInTheDocument()
+    expect(screen.getByText('v1')).toBeInTheDocument()
   })
 
   it('shows SSE events section when connected', async () => {
