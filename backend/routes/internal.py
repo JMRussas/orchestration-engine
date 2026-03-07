@@ -90,24 +90,21 @@ async def chat(request: ChatRequest):
     if provider == "ollama":
         return await _chat_ollama(request, full_prompt)
 
-    # CLI-based providers
+    # CLI-based providers — pipe prompt via stdin to avoid command line length limits
     model_used: Optional[str] = None
 
     if provider == "claude":
-        cmd_args = ["claude", "-p", full_prompt, "--output-format", "text"]
-        # Claude -p mode doesn't support model selection
+        cmd_args = ["claude", "-p", "--output-format", "text"]
     elif provider == "codex":
         cmd_args = ["codex", "exec"]
         if request.model:
             cmd_args.extend(["--model", request.model])
             model_used = request.model
-        cmd_args.extend(["--", full_prompt])
     else:  # gemini default
-        cmd_args = ["gemini"]
+        cmd_args = ["gemini", "-p", ""]
         if request.model:
             cmd_args.extend(["-m", request.model])
             model_used = request.model
-        cmd_args.extend(["-p", full_prompt])
 
     # On Windows, npm global binaries are .cmd — resolve to full path
     if sys.platform == "win32":
@@ -118,11 +115,14 @@ async def chat(request: ChatRequest):
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd_args,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(input=full_prompt.encode()), timeout=120,
+            )
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
