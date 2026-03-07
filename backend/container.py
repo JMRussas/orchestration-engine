@@ -50,6 +50,7 @@ class Container(containers.DeclarativeContainer):
             "backend.routes.rag",
             "backend.routes.auth_oidc",
             "backend.routes.external",
+            "backend.routes.internal",
             "backend.middleware.auth",
         ]
     )
