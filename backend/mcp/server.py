@@ -140,9 +140,9 @@ def create_server(config_path: Path | None = None) -> FastMCP:
             summary = plan.get("summary", "No summary")
 
             out = "--- Plan Generated ---\n"
-            out += f"Plan ID: {result['id']}\n"
-            out += f"Model: {result['model_used']}\n"
-            out += f"Cost: ${result['cost_usd']:.4f}\n\n"
+            out += f"Plan ID: {result.get('plan_id', result.get('id', '?'))}\n"
+            out += f"Model: {result.get('model_used', '?')}\n"
+            out += f"Cost: ${result.get('cost_usd', 0):.4f}\n\n"
             out += f"Summary: {summary}\n\n"
 
             if phases:
