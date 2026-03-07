@@ -71,6 +71,7 @@ docker run -p 5200:5200 -v ./config.json:/app/config.json orchestration
 | `backend/services/progress.py` | SSE broadcast, event persistence |
 | `backend/tools/registry.py` | Injectable `ToolRegistry` class |
 | `backend/tools/` | Tool implementations (RAG, Ollama, ComfyUI, file) |
+| `frontend/src/components/PlanTree/` | Hybrid tree/node plan visualizer (19 files: SVG dependency overlay, keyboard nav, search, theme configurator) |
 | `frontend/` | React 19 + TypeScript + Vite UI (ErrorBoundary, 404 page) |
 | `Dockerfile` | Multi-stage build (frontend + backend) |
 | `.github/workflows/ci.yml` | GitHub Actions CI (tests, lint, frontend build+test, E2E) |
