@@ -92,6 +92,45 @@ export interface Efficiency {
   cost_efficiency: CostEfficiencyItem[]
 }
 
+// Usage Overview
+export interface UsageOverviewSummary {
+  total_cost_usd: number
+  total_api_calls: number
+  total_tokens: number
+  active_projects: number
+}
+
+export interface CostByPurpose {
+  purpose: string
+  cost_usd: number
+  api_calls: number
+  pct_of_total: number
+}
+
+export interface CostByProvider {
+  provider: string
+  cost_usd: number
+  api_calls: number
+  prompt_tokens: number
+  completion_tokens: number
+  pct_of_total: number
+}
+
+export interface CostByModel {
+  model: string
+  provider: string
+  cost_usd: number
+  api_calls: number
+  pct_of_total: number
+}
+
+export interface UsageOverview {
+  summary: UsageOverviewSummary
+  by_purpose: CostByPurpose[]
+  by_provider: CostByProvider[]
+  by_model: CostByModel[]
+}
+
 // API Functions
 export const getCostBreakdown = (days = 30) =>
   apiFetch<CostBreakdown>(`/admin/analytics/cost-breakdown?days=${days}`)
@@ -101,3 +140,6 @@ export const getTaskOutcomes = () =>
 
 export const getEfficiency = () =>
   apiFetch<Efficiency>('/admin/analytics/efficiency')
+
+export const getUsageOverview = (days = 30) =>
+  apiFetch<UsageOverview>(`/admin/analytics/usage-overview?days=${days}`)

@@ -1,15 +1,29 @@
 // Orchestration Engine - Analytics Page
 //
-// Admin-only analytics: cost breakdown, task outcomes, efficiency.
+// Admin-only analytics: usage overview, cost breakdown, task outcomes, efficiency.
 //
 // Depends on: api/analytics.ts
 // Used by:    App.tsx
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import {
-  getCostBreakdown, getTaskOutcomes, getEfficiency,
-  type CostBreakdown, type TaskOutcomes, type Efficiency,
+  getCostBreakdown, getTaskOutcomes, getEfficiency, getUsageOverview,
+  type CostBreakdown, type TaskOutcomes, type Efficiency, type UsageOverview,
 } from '../api/analytics'
+
+const PURPOSE_COLORS: Record<string, string> = {
+  execution: 'var(--accent)',
+  planning: 'var(--warning)',
+  verification: '#ab47bc',
+  knowledge_extraction: '#66bb6a',
+}
+
+const PROVIDER_COLORS: Record<string, string> = {
+  anthropic: 'var(--accent)',
+  ollama: '#66bb6a',
+}
+
+const DAY_OPTIONS = [7, 14, 30, 90]
 
 const pctBar = (value: number, className = 'ok') => (
   <div className="progress-bar" role="progressbar"
@@ -21,17 +35,31 @@ const pctBar = (value: number, className = 'ok') => (
 
 const pctClass = (rate: number) => rate >= 0.8 ? 'ok' : rate >= 0.5 ? 'warn' : 'danger'
 
+const fmtTokens = (n: number) => {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
+  return String(n)
+}
+
+const purposeLabel = (p: string) =>
+  p.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+
 export default function Analytics() {
+  const [days, setDays] = useState(30)
+  const [overview, setOverview] = useState<UsageOverview | null>(null)
   const [cost, setCost] = useState<CostBreakdown | null>(null)
   const [outcomes, setOutcomes] = useState<TaskOutcomes | null>(null)
   const [efficiency, setEfficiency] = useState<Efficiency | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
+  const loadData = useCallback((d: number) => {
+    setLoading(true)
+    setError('')
     const errors: string[] = []
     Promise.allSettled([
-      getCostBreakdown().then(setCost),
+      getUsageOverview(d).then(setOverview),
+      getCostBreakdown(d).then(setCost),
       getTaskOutcomes().then(setOutcomes),
       getEfficiency().then(setEfficiency),
     ]).then(results => {
@@ -43,18 +71,151 @@ export default function Analytics() {
     })
   }, [])
 
+  useEffect(() => { loadData(days) }, [days, loadData])
+
   if (loading) return <p className="text-dim">Loading analytics...</p>
 
   return (
     <>
-      <h2 className="mb-2">Analytics</h2>
+      <div className="flex-between mb-2">
+        <h2 style={{ margin: 0 }}>Analytics</h2>
+        <div className="days-selector">
+          {DAY_OPTIONS.map(d => (
+            <button key={d} className={`btn btn-sm${d === days ? ' btn-active' : ''}`}
+              onClick={() => setDays(d)}>
+              {d}d
+            </button>
+          ))}
+        </div>
+      </div>
 
       {error && <div className="card mb-2" style={{ borderColor: 'var(--error)' }}>Failed to load: {error}</div>}
+
+      {/* Usage Overview */}
+      {overview && (
+        <>
+          {/* Summary Cards */}
+          <div className="grid grid-4 mb-2">
+            <div className="card stat-card">
+              <span className="stat-label">Total Spend</span>
+              <span className="stat-value cost">${overview.summary.total_cost_usd.toFixed(4)}</span>
+            </div>
+            <div className="card stat-card">
+              <span className="stat-label">API Calls</span>
+              <span className="stat-value">{overview.summary.total_api_calls.toLocaleString()}</span>
+            </div>
+            <div className="card stat-card">
+              <span className="stat-label">Tokens Processed</span>
+              <span className="stat-value">{fmtTokens(overview.summary.total_tokens)}</span>
+            </div>
+            <div className="card stat-card">
+              <span className="stat-label">Active Projects</span>
+              <span className="stat-value">{overview.summary.active_projects}</span>
+            </div>
+          </div>
+
+          {/* Cost by Purpose */}
+          <div className="grid grid-2 mb-2">
+            <div className="card">
+              <h4>Cost by Purpose</h4>
+              {overview.by_purpose.length === 0 ? (
+                <span className="text-dim">No data yet</span>
+              ) : (
+                <>
+                  <div className="bar-chart mb-1">
+                    {overview.by_purpose.map(p => (
+                      <div key={p.purpose} className="bar-segment" title={`${purposeLabel(p.purpose)}: ${p.pct_of_total}%`}
+                        style={{ width: `${Math.max(p.pct_of_total, 1)}%`, background: PURPOSE_COLORS[p.purpose] || 'var(--border)' }} />
+                    ))}
+                  </div>
+                  <table>
+                    <thead><tr><th>Purpose</th><th>Calls</th><th>Cost</th><th>%</th></tr></thead>
+                    <tbody>
+                      {overview.by_purpose.map(p => (
+                        <tr key={p.purpose}>
+                          <td>
+                            <span className="color-dot" style={{ background: PURPOSE_COLORS[p.purpose] || 'var(--border)' }} />
+                            {purposeLabel(p.purpose)}
+                          </td>
+                          <td>{p.api_calls}</td>
+                          <td className="cost">${p.cost_usd.toFixed(4)}</td>
+                          <td className="text-dim">{p.pct_of_total.toFixed(1)}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              )}
+            </div>
+
+            {/* Cost by Provider */}
+            <div className="card">
+              <h4>Cost by Provider</h4>
+              {overview.by_provider.length === 0 ? (
+                <span className="text-dim">No data yet</span>
+              ) : (
+                <>
+                  <div className="bar-chart mb-1">
+                    {overview.by_provider.map(p => (
+                      <div key={p.provider} className="bar-segment" title={`${p.provider}: ${p.pct_of_total}%`}
+                        style={{ width: `${Math.max(p.pct_of_total, 1)}%`, background: PROVIDER_COLORS[p.provider] || 'var(--border)' }} />
+                    ))}
+                  </div>
+                  <table>
+                    <thead><tr><th>Provider</th><th>Calls</th><th>In Tokens</th><th>Out Tokens</th><th>Cost</th><th>%</th></tr></thead>
+                    <tbody>
+                      {overview.by_provider.map(p => (
+                        <tr key={p.provider}>
+                          <td>
+                            <span className="color-dot" style={{ background: PROVIDER_COLORS[p.provider] || 'var(--border)' }} />
+                            {p.provider}
+                          </td>
+                          <td>{p.api_calls}</td>
+                          <td className="text-dim">{fmtTokens(p.prompt_tokens)}</td>
+                          <td className="text-dim">{fmtTokens(p.completion_tokens)}</td>
+                          <td className="cost">${p.cost_usd.toFixed(4)}</td>
+                          <td className="text-dim">{p.pct_of_total.toFixed(1)}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Cost by Model */}
+          {overview.by_model.length > 0 && (
+            <div className="card mb-2">
+              <h4>Cost by Model (top 10)</h4>
+              <table>
+                <thead><tr><th>Model</th><th>Provider</th><th>Calls</th><th>Cost</th><th></th><th>%</th></tr></thead>
+                <tbody>
+                  {overview.by_model.map(m => (
+                    <tr key={`${m.model}-${m.provider}`}>
+                      <td className="text-sm">{m.model}</td>
+                      <td><span className={`badge ${m.provider === 'ollama' ? 'ollama' : 'sonnet'}`}>{m.provider}</span></td>
+                      <td>{m.api_calls}</td>
+                      <td className="cost">${m.cost_usd.toFixed(4)}</td>
+                      <td style={{ width: '120px' }}>
+                        <div className="progress-bar" style={{ width: '100%' }}>
+                          <div className="progress-fill ok" style={{ width: `${Math.min(m.pct_of_total, 100)}%` }} />
+                        </div>
+                      </td>
+                      <td className="text-dim">{m.pct_of_total.toFixed(1)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
 
       {/* Cost Breakdown */}
       {cost && (
         <>
-          <h3 className="mb-1">Cost Breakdown</h3>
+          <h3 className="mb-1">Cost Breakdown (by task)</h3>
           <div className="grid grid-2 mb-2">
             <div className="card">
               <h4>By Model Tier</h4>
@@ -114,11 +275,6 @@ export default function Analytics() {
               </table>
             </div>
           )}
-
-          <div className="card mb-2">
-            <span className="text-dim">Total Task Cost:</span>{' '}
-            <span className="cost" style={{ fontSize: '1.25rem' }}>${cost.total_cost_usd.toFixed(4)}</span>
-          </div>
         </>
       )}
 

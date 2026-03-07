@@ -422,6 +422,48 @@ class AnalyticsEfficiency(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Usage Overview
+# ---------------------------------------------------------------------------
+
+class UsageOverviewSummary(BaseModel):
+    total_cost_usd: float
+    total_api_calls: int
+    total_tokens: int
+    active_projects: int
+
+
+class CostByPurpose(BaseModel):
+    purpose: str
+    cost_usd: float
+    api_calls: int
+    pct_of_total: float
+
+
+class CostByProvider(BaseModel):
+    provider: str
+    cost_usd: float
+    api_calls: int
+    prompt_tokens: int
+    completion_tokens: int
+    pct_of_total: float
+
+
+class CostByModel(BaseModel):
+    model: str
+    provider: str
+    cost_usd: float
+    api_calls: int
+    pct_of_total: float
+
+
+class AnalyticsUsageOverview(BaseModel):
+    summary: UsageOverviewSummary
+    by_purpose: list[CostByPurpose]
+    by_provider: list[CostByProvider]
+    by_model: list[CostByModel]
+
+
+# ---------------------------------------------------------------------------
 # RAG
 # ---------------------------------------------------------------------------
 

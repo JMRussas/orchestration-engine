@@ -22,12 +22,17 @@ from backend.models.schemas import (
     AnalyticsCostBreakdown,
     AnalyticsEfficiency,
     AnalyticsTaskOutcomes,
+    AnalyticsUsageOverview,
+    CostByModel,
     CostByModelTier,
     CostByProject,
+    CostByProvider,
+    CostByPurpose,
     CostEfficiencyItem,
     DailyCostTrend,
     RetryByTier,
     TaskOutcomeByTier,
+    UsageOverviewSummary,
     VerificationByTier,
     WaveThroughput,
 )
@@ -301,4 +306,103 @@ async def efficiency(
         unresolved_checkpoint_count=unresolved,
         wave_throughput=wave_throughput,
         cost_efficiency=cost_efficiency,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Usage Overview
+# ---------------------------------------------------------------------------
+
+@router.get("/usage-overview")
+@inject
+async def usage_overview(
+    _admin: dict = Depends(require_admin),
+    days: int = Query(default=30, ge=1, le=90),
+    db: Database = Depends(Provide[Container.db]),
+) -> AnalyticsUsageOverview:
+    """Usage overview: summary stats, cost by purpose/provider/model."""
+    cutoff = time.time() - (days * 86400)
+
+    # Summary totals
+    summary_row = await db.fetchone(
+        "SELECT COALESCE(SUM(cost_usd), 0) as total_cost, "
+        "COUNT(*) as total_calls, "
+        "COALESCE(SUM(prompt_tokens + completion_tokens), 0) as total_tokens "
+        "FROM usage_log WHERE timestamp >= ?",
+        (cutoff,),
+    )
+    active_row = await db.fetchone(
+        "SELECT COUNT(DISTINCT project_id) as cnt "
+        "FROM usage_log WHERE timestamp >= ? AND project_id IS NOT NULL",
+        (cutoff,),
+    )
+    total_cost = summary_row["total_cost"] if summary_row else 0
+    summary = UsageOverviewSummary(
+        total_cost_usd=round(total_cost, 6),
+        total_api_calls=summary_row["total_calls"] if summary_row else 0,
+        total_tokens=summary_row["total_tokens"] if summary_row else 0,
+        active_projects=active_row["cnt"] if active_row else 0,
+    )
+
+    # By purpose
+    purpose_rows = await db.fetchall(
+        "SELECT purpose, COALESCE(SUM(cost_usd), 0) as cost, COUNT(*) as calls "
+        "FROM usage_log WHERE timestamp >= ? "
+        "GROUP BY purpose ORDER BY cost DESC",
+        (cutoff,),
+    )
+    by_purpose = [
+        CostByPurpose(
+            purpose=r["purpose"] or "(unset)",
+            cost_usd=round(r["cost"], 6),
+            api_calls=r["calls"],
+            pct_of_total=round(r["cost"] / total_cost * 100, 1) if total_cost > 0 else 0,
+        )
+        for r in purpose_rows
+    ]
+
+    # By provider
+    provider_rows = await db.fetchall(
+        "SELECT provider, COALESCE(SUM(cost_usd), 0) as cost, COUNT(*) as calls, "
+        "COALESCE(SUM(prompt_tokens), 0) as pt, "
+        "COALESCE(SUM(completion_tokens), 0) as ct "
+        "FROM usage_log WHERE timestamp >= ? "
+        "GROUP BY provider ORDER BY cost DESC",
+        (cutoff,),
+    )
+    by_provider = [
+        CostByProvider(
+            provider=r["provider"],
+            cost_usd=round(r["cost"], 6),
+            api_calls=r["calls"],
+            prompt_tokens=r["pt"],
+            completion_tokens=r["ct"],
+            pct_of_total=round(r["cost"] / total_cost * 100, 1) if total_cost > 0 else 0,
+        )
+        for r in provider_rows
+    ]
+
+    # By model (top 10)
+    model_rows = await db.fetchall(
+        "SELECT model, provider, COALESCE(SUM(cost_usd), 0) as cost, COUNT(*) as calls "
+        "FROM usage_log WHERE timestamp >= ? "
+        "GROUP BY model, provider ORDER BY cost DESC LIMIT 10",
+        (cutoff,),
+    )
+    by_model = [
+        CostByModel(
+            model=r["model"],
+            provider=r["provider"],
+            cost_usd=round(r["cost"], 6),
+            api_calls=r["calls"],
+            pct_of_total=round(r["cost"] / total_cost * 100, 1) if total_cost > 0 else 0,
+        )
+        for r in model_rows
+    ]
+
+    return AnalyticsUsageOverview(
+        summary=summary,
+        by_purpose=by_purpose,
+        by_provider=by_provider,
+        by_model=by_model,
     )

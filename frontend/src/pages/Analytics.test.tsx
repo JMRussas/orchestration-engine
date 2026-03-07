@@ -7,15 +7,17 @@ vi.mock('../api/analytics', () => ({
   getCostBreakdown: vi.fn(),
   getTaskOutcomes: vi.fn(),
   getEfficiency: vi.fn(),
+  getUsageOverview: vi.fn(),
 }))
 
-import { getCostBreakdown, getTaskOutcomes, getEfficiency } from '../api/analytics'
-import type { CostBreakdown, TaskOutcomes, Efficiency } from '../api/analytics'
+import { getCostBreakdown, getTaskOutcomes, getEfficiency, getUsageOverview } from '../api/analytics'
+import type { CostBreakdown, TaskOutcomes, Efficiency, UsageOverview } from '../api/analytics'
 import Analytics from './Analytics'
 
 const mockGetCostBreakdown = vi.mocked(getCostBreakdown)
 const mockGetTaskOutcomes = vi.mocked(getTaskOutcomes)
 const mockGetEfficiency = vi.mocked(getEfficiency)
+const mockGetUsageOverview = vi.mocked(getUsageOverview)
 
 const mockCost: CostBreakdown = {
   by_project: [
@@ -56,7 +58,22 @@ const mockEfficiency: Efficiency = {
   ],
 }
 
+const mockOverview: UsageOverview = {
+  summary: { total_cost_usd: 0.15, total_api_calls: 5, total_tokens: 750, active_projects: 1 },
+  by_purpose: [
+    { purpose: 'execution', cost_usd: 0.10, api_calls: 3, pct_of_total: 66.7 },
+    { purpose: 'planning', cost_usd: 0.05, api_calls: 2, pct_of_total: 33.3 },
+  ],
+  by_provider: [
+    { provider: 'anthropic', cost_usd: 0.15, api_calls: 5, prompt_tokens: 500, completion_tokens: 250, pct_of_total: 100.0 },
+  ],
+  by_model: [
+    { model: 'claude-3-haiku', provider: 'anthropic', cost_usd: 0.15, api_calls: 5, pct_of_total: 100.0 },
+  ],
+}
+
 function setupMocks() {
+  mockGetUsageOverview.mockResolvedValue(mockOverview)
   mockGetCostBreakdown.mockResolvedValue(mockCost)
   mockGetTaskOutcomes.mockResolvedValue(mockOutcomes)
   mockGetEfficiency.mockResolvedValue(mockEfficiency)
@@ -68,6 +85,7 @@ beforeEach(() => {
 
 describe('Analytics', () => {
   it('shows loading state', () => {
+    mockGetUsageOverview.mockReturnValue(new Promise(() => {}))
     mockGetCostBreakdown.mockReturnValue(new Promise(() => {}))
     mockGetTaskOutcomes.mockReturnValue(new Promise(() => {}))
     mockGetEfficiency.mockReturnValue(new Promise(() => {}))
@@ -80,10 +98,9 @@ describe('Analytics', () => {
     setupMocks()
     render(<Analytics />)
 
-    expect(await screen.findByText('Cost Breakdown')).toBeInTheDocument()
+    expect(await screen.findByText(/Cost Breakdown/)).toBeInTheDocument()
     // Project Alpha appears in cost breakdown AND wave throughput tables
     expect(screen.getAllByText('Project Alpha').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('Total Task Cost:')).toBeInTheDocument()
   })
 
   it('renders model tier badges', async () => {
@@ -150,6 +167,7 @@ describe('Analytics', () => {
         { model_tier: 'haiku', cost_usd: 0.05, tasks_completed: 2, verification_pass_count: 0, cost_per_pass: null },
       ],
     }
+    mockGetUsageOverview.mockResolvedValue(mockOverview)
     mockGetCostBreakdown.mockResolvedValue(mockCost)
     mockGetTaskOutcomes.mockResolvedValue(mockOutcomes)
     mockGetEfficiency.mockResolvedValue(effWithNull)
@@ -163,6 +181,7 @@ describe('Analytics', () => {
   })
 
   it('shows error on all fetch failures', async () => {
+    mockGetUsageOverview.mockRejectedValue(new Error('Network error'))
     mockGetCostBreakdown.mockRejectedValue(new Error('Network error'))
     mockGetTaskOutcomes.mockRejectedValue(new Error('Network error'))
     mockGetEfficiency.mockRejectedValue(new Error('Network error'))
@@ -172,7 +191,8 @@ describe('Analytics', () => {
   })
 
   it('shows partial data and error on partial failure', async () => {
-    // Cost succeeds, others fail
+    // Overview + cost succeed, others fail
+    mockGetUsageOverview.mockResolvedValue(mockOverview)
     mockGetCostBreakdown.mockResolvedValue(mockCost)
     mockGetTaskOutcomes.mockRejectedValue(new Error('Outcomes failed'))
     mockGetEfficiency.mockRejectedValue(new Error('Efficiency failed'))
@@ -182,7 +202,7 @@ describe('Analytics', () => {
     // Should show the error banner
     expect(await screen.findByText(/Failed to load/)).toBeInTheDocument()
     // Should still render the cost data that succeeded
-    expect(screen.getByText('Cost Breakdown')).toBeInTheDocument()
+    expect(screen.getByText(/Cost Breakdown/)).toBeInTheDocument()
     expect(screen.getByText('Project Alpha')).toBeInTheDocument()
   })
 
