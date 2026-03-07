@@ -9,6 +9,7 @@
 
 import asyncio
 import logging
+import shutil
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
@@ -93,6 +94,26 @@ def _build_resources() -> list[ResourceDef]:
         category="api",
     ))
 
+    # Gemini CLI
+    resources.append(ResourceDef(
+        id="gemini_cli",
+        name="Gemini CLI",
+        host="",
+        port=0,
+        health_url=None,
+        category="cli",
+    ))
+
+    # Codex CLI
+    resources.append(ResourceDef(
+        id="codex_cli",
+        name="Codex CLI",
+        host="",
+        port=0,
+        health_url=None,
+        category="cli",
+    ))
+
     return resources
 
 
@@ -136,6 +157,20 @@ async def _check_resource(
 ) -> ResourceState:
     """Check a single resource's health (async)."""
     state = ResourceState(id=res.id, name=res.name, category=res.category)
+
+    # CLI tools: check if binary is on PATH
+    if res.category == "cli":
+        cli_binaries = {"gemini_cli": "gemini", "codex_cli": "codex"}
+        binary = cli_binaries.get(res.id)
+        if binary and shutil.which(binary):
+            state.status = ResourceStatus.ONLINE
+            state.method = "cli"
+            state.details = {"binary": binary, "path": shutil.which(binary)}
+        else:
+            state.status = ResourceStatus.OFFLINE
+            state.method = "cli"
+            state.details = {"binary": binary, "hint": f"Install {binary} CLI"}
+        return state
 
     # Claude API: check if key is configured
     if res.id == "anthropic_api":

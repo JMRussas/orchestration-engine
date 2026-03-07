@@ -10,6 +10,7 @@
 
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -42,6 +43,14 @@ def create_server(config_path: Path | None = None) -> FastMCP:
     api_url = config.get("api_url", "http://localhost:5200").rstrip("/")
     api_key = config.get("api_key", "")
     timeout = config.get("timeout", 300)
+
+    # Resolve env var references like ${BEETHOVEN_API_KEY}
+    if api_key.startswith("${") and api_key.endswith("}"):
+        env_name = api_key[2:-1]
+        api_key = os.environ.get(env_name, "")
+    if api_url.startswith("${") and api_url.endswith("}"):
+        env_name = api_url[2:-1]
+        api_url = os.environ.get(env_name, api_url)
 
     if not api_key:
         log.error("api_key is required in MCP config")
