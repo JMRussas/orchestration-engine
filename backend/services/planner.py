@@ -9,27 +9,15 @@ import json
 import logging
 import time
 import uuid
+from typing import Optional
 
-import anthropic
-
-from backend.config import ANTHROPIC_API_KEY, API_TIMEOUT, PLANNING_MODEL
-from backend.exceptions import BudgetExhaustedError, NotFoundError, PlanParseError
+from backend.config import PLANNING_MODEL
+from backend.exceptions import NotFoundError, PlanParseError
 from backend.models.enums import PlanningRigor, PlanStatus, ProjectStatus
-from backend.services.model_router import calculate_cost
+from backend.services.llm_router import call_llm
 from backend.utils.json_utils import extract_json_object, parse_requirements
 
 logger = logging.getLogger("orchestration.planner")
-
-# Token estimates for budget reservation before API calls
-_EST_PLANNING_INPUT_TOKENS = 2000   # system prompt (~1.5k) + requirements
-_EST_PLANNING_OUTPUT_TOKENS = 2000  # plan JSON response
-
-# Max output tokens by rigor level (more structured output needs more tokens)
-_MAX_TOKENS_BY_RIGOR = {
-    PlanningRigor.L1: 4096,
-    PlanningRigor.L2: 6144,
-    PlanningRigor.L3: 8192,
-}
 
 # Backward-compat alias for external importers
 _extract_json_object = extract_json_object
@@ -336,18 +324,21 @@ class PlannerService:
     async def generate(
         self,
         project_id: str,
-        client: anthropic.AsyncAnthropic | None = None,
+        provider: Optional[str] = None,
+        client=None,  # Deprecated — kept for backward compat, ignored
     ) -> dict:
-        """Generate a structured plan for a project using Claude.
+        """Generate a structured plan for a project using CLI providers.
+
+        Routes through llm_router (CLI subprocess) instead of Anthropic API.
+        Zero cost on subscription billing.
 
         Args:
             project_id: The project to plan for.
-            client: Optional shared Anthropic client. If None, creates (and closes) one.
+            provider: Optional explicit provider (gemini, claude, codex). Defaults to fallback chain.
 
         Returns the plan dict and updates the database.
         """
         db = self._db
-        budget = self._budget
 
         # Get project
         row = await db.fetchone("SELECT * FROM projects WHERE id = ?", (project_id,))
@@ -373,26 +364,14 @@ class PlannerService:
 
         if csharp_type_map is not None:
             system_prompt = _build_csharp_system_prompt(csharp_type_map)
-            max_tokens = 8192  # C# plans are detailed
         else:
             system_prompt = _build_system_prompt(rigor)
-            max_tokens = _MAX_TOKENS_BY_RIGOR[rigor]
-
-        # Reserve budget before making the API call (prevents TOCTOU race)
-        estimated_cost = calculate_cost(PLANNING_MODEL, _EST_PLANNING_INPUT_TOKENS, _EST_PLANNING_OUTPUT_TOKENS)
-        if not await budget.reserve_spend(estimated_cost):
-            raise BudgetExhaustedError("Budget limit reached. Cannot generate plan.")
 
         # Update project status
         await db.execute_write(
             "UPDATE projects SET status = ?, updated_at = ? WHERE id = ?",
             (ProjectStatus.PLANNING, time.time(), project_id),
         )
-
-        # Use provided client or create a temporary one
-        owns_client = client is None
-        if owns_client:
-            client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
 
         # Number requirements for traceability (paragraph-based splitting)
         req_blocks = parse_requirements(requirements)
@@ -402,61 +381,35 @@ class PlannerService:
             numbered = requirements
         user_msg = f"Project: {project_name}\n\nRequirements:\n{numbered}"
 
-        response = None
         try:
-            response = await client.messages.create(
-                model=PLANNING_MODEL,
-                max_tokens=max_tokens,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_msg}],
-                timeout=API_TIMEOUT,
+            llm_response = await call_llm(
+                system_prompt,
+                user_msg,
+                provider=provider,
+                task_type="planning",
             )
 
-            # Extract text and tokens
-            if not response.content:
-                raise PlanParseError("Claude returned an empty response")
-
-            response_text = response.content[0].text
-            prompt_tokens = response.usage.input_tokens
-            completion_tokens = response.usage.output_tokens
-            cost = calculate_cost(PLANNING_MODEL, prompt_tokens, completion_tokens)
+            response_text = llm_response.text
+            if not response_text:
+                raise PlanParseError("LLM returned an empty response")
 
             # Parse the plan JSON
             try:
                 plan_data = json.loads(response_text)
             except json.JSONDecodeError:
-                # Try to extract JSON from the response (in case of markdown fences).
-                # Use a balanced-brace approach to find the outermost JSON object,
-                # instead of a greedy regex that could match too much.
                 plan_data = extract_json_object(response_text)
                 if plan_data is None:
-                    raise PlanParseError("Failed to parse plan JSON from Claude response")
+                    raise PlanParseError(
+                        f"Failed to parse plan JSON from {llm_response.provider} response"
+                    )
 
         except Exception:
-            # Record actual API spend even if parsing failed — prevents budget leak
-            if response is not None and hasattr(response, "usage"):
-                pt = response.usage.input_tokens
-                ct = response.usage.output_tokens
-                actual_cost = calculate_cost(PLANNING_MODEL, pt, ct)
-                await budget.record_spend(
-                    cost_usd=actual_cost,
-                    prompt_tokens=pt,
-                    completion_tokens=ct,
-                    provider="anthropic",
-                    model=PLANNING_MODEL,
-                    purpose="planning",
-                    project_id=project_id,
-                )
             # Reset project status so it's not stuck in PLANNING
             await db.execute_write(
                 "UPDATE projects SET status = ?, updated_at = ? WHERE id = ?",
                 (ProjectStatus.DRAFT, time.time(), project_id),
             )
-            await budget.release_reservation(estimated_cost)
             raise
-        finally:
-            if owns_client:
-                await client.close()
 
         # Determine plan version
         version_row = await db.fetchone(
@@ -471,28 +424,17 @@ class PlannerService:
             (PlanStatus.SUPERSEDED, project_id, PlanStatus.DRAFT),
         )
 
-        # Store the plan
+        # Store the plan — cost is $0 on subscription billing
         plan_id = uuid.uuid4().hex[:12]
+        model_used = f"{llm_response.provider}/{llm_response.model or 'default'}"
         now = time.time()
         await db.execute_write(
             "INSERT INTO plans (id, project_id, version, model_used, prompt_tokens, "
             "completion_tokens, cost_usd, plan_json, status, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (plan_id, project_id, version, PLANNING_MODEL, prompt_tokens,
-             completion_tokens, cost, json.dumps(plan_data), PlanStatus.DRAFT, now),
+            (plan_id, project_id, version, model_used, 0, 0, 0.0,
+             json.dumps(plan_data), PlanStatus.DRAFT, now),
         )
-
-        # Record spending and release reservation
-        await budget.record_spend(
-            cost_usd=cost,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            provider="anthropic",
-            model=PLANNING_MODEL,
-            purpose="planning",
-            project_id=project_id,
-        )
-        await budget.release_reservation(estimated_cost)
 
         # Update project status back to draft (awaiting approval)
         await db.execute_write(
@@ -504,10 +446,10 @@ class PlannerService:
             "plan_id": plan_id,
             "version": version,
             "plan": plan_data,
-            "model_used": PLANNING_MODEL,
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "cost_usd": cost,
+            "model_used": model_used,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost_usd": 0.0,
         }
 
 
@@ -516,7 +458,8 @@ async def generate_plan(
     *,
     db,
     budget,
-    client: anthropic.AsyncAnthropic | None = None,
+    provider: Optional[str] = None,
+    client=None,  # Deprecated — ignored
 ) -> dict:
     """Convenience wrapper for backward compatibility with tests and direct callers."""
-    return await PlannerService(db=db, budget=budget).generate(project_id, client=client)
+    return await PlannerService(db=db, budget=budget).generate(project_id, provider=provider)
