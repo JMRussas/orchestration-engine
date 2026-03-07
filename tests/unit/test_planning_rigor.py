@@ -31,20 +31,20 @@ class TestBuildSystemPrompt:
 
     def test_l1_prompt_contains_flat_tasks(self):
         prompt = _build_system_prompt(PlanningRigor.L1)
-        assert '"tasks"' in prompt
-        assert '"phases"' not in prompt
+        assert "<tasks>" in prompt
+        assert "<phases>" not in prompt
 
     def test_l2_prompt_contains_phases_and_questions(self):
         prompt = _build_system_prompt(PlanningRigor.L2)
-        assert '"phases"' in prompt
-        assert '"open_questions"' in prompt
-        assert '"risk_assessment"' not in prompt
+        assert "<phases>" in prompt
+        assert "<questions>" in prompt
+        assert "<risks>" not in prompt
 
     def test_l3_prompt_contains_risk_and_test_strategy(self):
         prompt = _build_system_prompt(PlanningRigor.L3)
-        assert '"phases"' in prompt
-        assert '"risk_assessment"' in prompt
-        assert '"test_strategy"' in prompt
+        assert "<phases>" in prompt
+        assert "<risks>" in prompt
+        assert "<test_strategy>" in prompt
 
     def test_all_rigor_levels_have_suffix(self):
         for rigor in PlanningRigor:
@@ -161,13 +161,24 @@ class TestFlattenPlanTasks:
 # PlannerService rigor from project config
 # ---------------------------------------------------------------------------
 
+_DEFAULT_XML_PLAN = """<plan level="L1">
+  <summary>Test plan</summary>
+  <tasks>
+    <task index="0">
+      <title>T1</title>
+      <description>Do it</description>
+      <task_type>code</task_type>
+      <complexity>simple</complexity>
+      <depends_on></depends_on>
+      <tools_needed></tools_needed>
+    </task>
+  </tasks>
+</plan>"""
+
+
 def _make_plan_response(plan_text=None, pt=100, ct=200):
     if plan_text is None:
-        plan_text = json.dumps({
-            "summary": "Test plan",
-            "tasks": [{"title": "T1", "description": "Do it", "task_type": "code",
-                        "complexity": "simple", "depends_on": [], "tools_needed": []}],
-        })
+        plan_text = _DEFAULT_XML_PLAN
     response = MagicMock()
     response.content = [MagicMock(text=plan_text, type="text")]
     response.usage = MagicMock(input_tokens=pt, output_tokens=ct)
@@ -206,8 +217,8 @@ class TestPlannerRigorConfig:
 
         call_kwargs = mock_client.messages.create.call_args.kwargs
         system = call_kwargs["system"]
-        assert '"tasks"' in system
-        assert '"phases"' not in system
+        assert "<tasks>" in system
+        assert "<phases>" not in system
         assert call_kwargs["max_tokens"] == _MAX_TOKENS_BY_RIGOR[PlanningRigor.L1]
 
     @patch("backend.services.planner.calculate_cost", return_value=0.01)
@@ -226,8 +237,8 @@ class TestPlannerRigorConfig:
 
         call_kwargs = mock_client.messages.create.call_args.kwargs
         system = call_kwargs["system"]
-        assert '"risk_assessment"' in system
-        assert '"test_strategy"' in system
+        assert "<risks>" in system
+        assert "<test_strategy>" in system
         assert call_kwargs["max_tokens"] == _MAX_TOKENS_BY_RIGOR[PlanningRigor.L3]
 
     @patch("backend.services.planner.calculate_cost", return_value=0.01)
@@ -246,8 +257,8 @@ class TestPlannerRigorConfig:
 
         call_kwargs = mock_client.messages.create.call_args.kwargs
         system = call_kwargs["system"]
-        assert '"phases"' in system
-        assert '"open_questions"' in system
+        assert "<phases>" in system
+        assert "<questions>" in system
         assert call_kwargs["max_tokens"] == _MAX_TOKENS_BY_RIGOR[PlanningRigor.L2]
 
 

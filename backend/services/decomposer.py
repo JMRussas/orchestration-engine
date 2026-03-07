@@ -1,8 +1,8 @@
 #  Orchestration Engine - Plan Decomposer
 #
-#  Converts an approved plan JSON into task rows with dependency edges.
+#  Converts an approved plan (XML or JSON) into task rows with dependency edges.
 #
-#  Depends on: backend/config.py, services/model_router.py
+#  Depends on: backend/config.py, services/model_router.py, utils/xml_utils.py
 #  Used by:    routes/projects.py, container.py
 
 import json
@@ -66,7 +66,13 @@ class DecomposerService:
         if plan_row["project_id"] != project_id:
             raise NotFoundError(f"Plan {plan_id} does not belong to project {project_id}")
 
-        plan_data = json.loads(plan_row["plan_json"])
+        # Prefer XML plan (source of truth) with JSON fallback
+        plan_xml_raw = plan_row["plan_xml"]
+        if plan_xml_raw:
+            from backend.utils.xml_utils import parse_plan_xml
+            plan_data = parse_plan_xml(plan_xml_raw)
+        else:
+            plan_data = json.loads(plan_row["plan_json"])
         tasks_data, phase_names = _flatten_plan_tasks(plan_data)
 
         if not tasks_data:

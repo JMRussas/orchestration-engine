@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS plans (
     completion_tokens INTEGER NOT NULL DEFAULT 0,
     cost_usd REAL NOT NULL DEFAULT 0.0,
     plan_json TEXT NOT NULL,
+    plan_xml TEXT,
     status TEXT NOT NULL DEFAULT 'draft',
     created_at REAL NOT NULL
 );

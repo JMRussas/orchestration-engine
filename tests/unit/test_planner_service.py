@@ -5,7 +5,6 @@
 #  Depends on: backend/services/planner.py, backend/db/connection.py
 #  Used by:    pytest
 
-import json
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -56,14 +55,25 @@ class TestExtractJsonObject:
 # TestPlannerServiceGenerate
 # ---------------------------------------------------------------------------
 
+_DEFAULT_XML_PLAN = """<plan level="L1">
+  <summary>Test plan</summary>
+  <tasks>
+    <task index="0">
+      <title>Task 1</title>
+      <description>Do it</description>
+      <task_type>code</task_type>
+      <complexity>simple</complexity>
+      <depends_on></depends_on>
+      <tools_needed></tools_needed>
+    </task>
+  </tasks>
+</plan>"""
+
+
 def _make_plan_response(plan_text=None, pt=100, ct=200):
     """Build a mock Claude response for planning."""
     if plan_text is None:
-        plan_text = json.dumps({
-            "summary": "Test plan",
-            "tasks": [{"title": "Task 1", "description": "Do it", "task_type": "code",
-                        "complexity": "simple", "depends_on": [], "tools_needed": []}],
-        })
+        plan_text = _DEFAULT_XML_PLAN
     response = MagicMock()
     response.content = [MagicMock(text=plan_text, type="text")]
     response.usage = MagicMock(input_tokens=pt, output_tokens=ct)

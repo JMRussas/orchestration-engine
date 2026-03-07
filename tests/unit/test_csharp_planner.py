@@ -30,10 +30,10 @@ class TestCsharpSystemPrompt:
 
     def test_includes_task_schema(self):
         prompt = _build_csharp_system_prompt("types")
-        assert "target_signature" in prompt
-        assert "target_class" in prompt
-        assert "available_methods" in prompt
-        assert "constructor_params" in prompt
+        assert "<target_signature>" in prompt
+        assert "<target_class>" in prompt
+        assert "<available_methods>" in prompt
+        assert "<constructor_params>" in prompt
 
     def test_includes_strategy_rules(self):
         prompt = _build_csharp_system_prompt("types")
@@ -50,7 +50,7 @@ class TestCsharpSystemPrompt:
         """Verify the generic prompt path still works."""
         prompt = _build_system_prompt(PlanningRigor.L2)
         assert "project planner" in prompt
-        assert "reflected_types" not in prompt
+        assert "<reflected_types>" not in prompt
 
 
 def _make_planner_db_mock(config_json):
@@ -69,8 +69,13 @@ def _make_planner_db_mock(config_json):
     return mock_db
 
 
-def _make_anthropic_mock(response_text='{"summary": "test", "phases": []}'):
+_DEFAULT_CSHARP_XML = '<plan level="csharp"><summary>test</summary><phases></phases></plan>'
+
+
+def _make_anthropic_mock(response_text=None):
     """Create a mock anthropic module + client."""
+    if response_text is None:
+        response_text = _DEFAULT_CSHARP_XML
     mock_anthropic = AsyncMock()
     mock_client = AsyncMock()
     mock_response = AsyncMock()
@@ -116,7 +121,9 @@ class TestPlannerServiceCsharpStrategy:
             mock_reflect.return_value = None  # Reflection failed
 
             with patch("backend.services.planner.anthropic") as mock_anthropic_mod:
-                mock_anthropic, mock_client = _make_anthropic_mock('{"summary": "test", "tasks": []}')
+                mock_anthropic, mock_client = _make_anthropic_mock(
+                    '<plan level="L2"><summary>test</summary><phases></phases></plan>'
+                )
                 mock_anthropic_mod.AsyncAnthropic.return_value = mock_client
 
                 await planner.generate("proj1")

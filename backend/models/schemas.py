@@ -95,7 +95,8 @@ class PlanOut(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     cost_usd: float
-    plan: dict  # The structured plan JSON
+    plan: dict  # The structured plan data (parsed from XML or JSON)
+    plan_xml: str | None = None  # Raw XML plan (if available)
     status: PlanStatus
     created_at: float
 
