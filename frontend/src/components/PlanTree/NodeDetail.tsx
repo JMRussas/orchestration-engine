@@ -20,8 +20,9 @@ interface Props {
 export default function NodeDetail({ node, theme, onClose }: Props) {
   const panelRef = useRef<HTMLDivElement>(null)
 
-  // Escape is handled by useTreeKeyboard (onDeselect → handleClose)
-  // to avoid double-firing when focus is on a tree node.
+  // Escape within the panel closes it. This is scoped to the panel's
+  // onKeyDown (not a global listener) to avoid double-firing with
+  // useTreeKeyboard's Escape handler on the tree container.
 
   if (!node?.detail) return null
 
@@ -34,6 +35,7 @@ export default function NodeDetail({ node, theme, onClose }: Props) {
       style={{ borderLeftColor: colors.accent }}
       aria-live="polite"
       aria-label="Node details"
+      onKeyDown={e => { if (e.key === 'Escape') onClose() }}
     >
       <div className="pt-detail-header">
         <h4 style={{ color: colors.text, margin: 0 }}>{node.detail.title}</h4>
