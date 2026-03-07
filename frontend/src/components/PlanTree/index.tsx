@@ -48,7 +48,7 @@ export default function PlanTree({ plan }: Props) {
     // Return focus to the node that opened the detail panel
     if (lastFocusedNodeRef.current) {
       const el = document.querySelector(
-        `[data-node-id="${lastFocusedNodeRef.current}"]`,
+        `[data-node-id="${CSS.escape(lastFocusedNodeRef.current)}"]`,
       ) as HTMLElement | null
       el?.focus()
     }

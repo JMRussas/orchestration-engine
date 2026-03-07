@@ -57,9 +57,11 @@ export default function ThemeConfigurator({ theme, setNodeColor, resetNode, rese
   }, [open])
 
   const togglePopover = useCallback(() => {
-    setOpen(o => !o)
-    if (open) setActive(null)
-  }, [open])
+    setOpen(o => {
+      if (o) setActive(null)
+      return !o
+    })
+  }, [])
 
   const handleSwatchClick = useCallback((nodeType: NodeType, role: ColorRole) => {
     setActive(prev =>

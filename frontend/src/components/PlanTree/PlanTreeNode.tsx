@@ -36,20 +36,12 @@ export default function PlanTreeNode({
   onSelect, expandState, siblingCount, positionIndex,
   visibleIds, matchIds, searchQuery,
 }: Props) {
-  // Search filtering: hide nodes not in visibleIds
-  if (visibleIds && !visibleIds.has(node.id)) return null
-
-  const isDimmed = matchIds && !matchIds.has(node.id)
+  // All hooks must be called unconditionally (Rules of Hooks)
   const nodeRef = useRef<HTMLDivElement>(null)
   const registerRef = useRegisterNode(node.id)
   const { setHoveredNodeId } = useDependencyContext()
   const hasChildren = node.children.length > 0
-  const expanded = hasChildren && expandState.isExpanded(node.id)
-  const isSelected = selectedId === node.id
-  const isFocused = focusedId === node.id
-  const colors = getNodeColors(theme, node.type)
 
-  // Combined ref: local ref + dependency context registration
   const setNodeRef = useCallback((el: HTMLDivElement | null) => {
     (nodeRef as React.MutableRefObject<HTMLDivElement | null>).current = el
     registerRef(el)
@@ -71,6 +63,15 @@ export default function PlanTreeNode({
     if (node.detail) onSelect(node)
     else toggle()
   }, [node, onSelect, toggle])
+
+  // Search filtering: hide nodes not in visibleIds (after all hooks)
+  if (visibleIds && !visibleIds.has(node.id)) return null
+
+  const isDimmed = matchIds && !matchIds.has(node.id)
+  const expanded = hasChildren && expandState.isExpanded(node.id)
+  const isSelected = selectedId === node.id
+  const isFocused = focusedId === node.id
+  const colors = getNodeColors(theme, node.type)
 
   // Chevron icon
   const chevron = hasChildren

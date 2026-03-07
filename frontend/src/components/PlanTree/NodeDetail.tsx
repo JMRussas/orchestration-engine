@@ -6,7 +6,7 @@
 // Depends on: types.ts, theme.ts
 // Used by:    PlanTree/index.tsx
 
-import { useEffect, useRef } from 'react'
+import { useRef } from 'react'
 import type { TreeNode } from './types'
 import type { PlanTreeTheme } from './theme'
 import { getNodeColors } from './theme'
@@ -20,15 +20,8 @@ interface Props {
 export default function NodeDetail({ node, theme, onClose }: Props) {
   const panelRef = useRef<HTMLDivElement>(null)
 
-  // Escape key closes detail panel and returns focus (handled by onClose in parent)
-  useEffect(() => {
-    if (!node) return
-    const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', handleEsc)
-    return () => window.removeEventListener('keydown', handleEsc)
-  }, [node, onClose])
+  // Escape is handled by useTreeKeyboard (onDeselect → handleClose)
+  // to avoid double-firing when focus is on a tree node.
 
   if (!node?.detail) return null
 

@@ -378,35 +378,195 @@
 }
 
 /* ── Theme Configurator ── */
-.pt-theme-btn { background: none; border: 1px solid var(--border); border-radius: 4px; padding: 3px 8px; font-size: 0.8125rem; cursor: pointer; color: var(--text-dim); transition: all 0.15s; margin-left: auto; }
-.pt-theme-btn:hover { border-color: var(--text-dim); color: var(--text); }
-.pt-theme-popover { position: absolute; top: 100%; right: 0; z-index: 10; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; min-width: 280px; max-height: 400px; overflow-y: auto; box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
-.pt-theme-group { margin-bottom: 8px; }
-.pt-theme-group-label { font-size: 0.625rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); margin-bottom: 4px; }
-.pt-theme-row { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
-.pt-theme-name { font-size: 0.75rem; min-width: 60px; color: var(--text); }
-.pt-theme-swatch { width: 18px; height: 18px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.15); cursor: pointer; transition: transform 0.1s; }
-.pt-theme-swatch:hover { transform: scale(1.2); }
-.pt-theme-swatch.active { box-shadow: 0 0 0 2px var(--accent); }
-.pt-theme-sliders { padding: 6px 0 6px 66px; }
-.pt-theme-slider-row { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
-.pt-theme-slider-label { font-size: 0.625rem; width: 12px; color: var(--text-dim); }
-.pt-theme-slider { flex: 1; height: 6px; -webkit-appearance: none; appearance: none; border-radius: 3px; outline: none; }
-.pt-theme-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: white; border: 1px solid rgba(0,0,0,0.3); cursor: pointer; }
-.pt-theme-reset { background: none; border: 1px solid var(--border); border-radius: 4px; padding: 4px 12px; font-size: 0.6875rem; color: var(--text-dim); cursor: pointer; width: 100%; margin-top: 8px; }
-.pt-theme-reset:hover { color: var(--text); border-color: var(--text-dim); }
+.pt-theme-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  color: var(--text-dim);
+  transition: all 0.15s;
+  margin-left: auto;
+}
+
+.pt-theme-btn:hover {
+  border-color: var(--text-dim);
+  color: var(--text);
+}
+
+.pt-theme-popover {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 10;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  min-width: 280px;
+  max-height: 400px;
+  overflow-y: auto;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.pt-theme-group {
+  margin-bottom: 8px;
+}
+
+.pt-theme-group-label {
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.pt-theme-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+}
+
+.pt-theme-name {
+  font-size: 0.75rem;
+  min-width: 60px;
+  color: var(--text);
+}
+
+.pt-theme-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.pt-theme-swatch:hover {
+  transform: scale(1.2);
+}
+
+.pt-theme-swatch.active {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.pt-theme-sliders {
+  padding: 6px 0 6px 66px;
+}
+
+.pt-theme-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.pt-theme-slider-label {
+  font-size: 0.625rem;
+  width: 12px;
+  color: var(--text-dim);
+}
+
+.pt-theme-slider {
+  flex: 1;
+  height: 6px;
+  -webkit-appearance: none;
+  appearance: none;
+  border-radius: 3px;
+  outline: none;
+}
+
+.pt-theme-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: white;
+  border: 1px solid rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}
+
+.pt-theme-reset {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 0.6875rem;
+  color: var(--text-dim);
+  cursor: pointer;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.pt-theme-reset:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
 
 /* ── Search ── */
-.pt-search { display: flex; align-items: center; gap: 6px; flex: 1; }
-.pt-search-input { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 0.75rem; color: var(--text); outline: none; min-width: 120px; }
-.pt-search-input:focus { border-color: var(--accent); }
-.pt-search-info { font-size: 0.6875rem; color: var(--text-dim); white-space: nowrap; }
-.pt-search-nav { background: none; border: none; color: var(--text-dim); cursor: pointer; padding: 2px 4px; font-size: 0.75rem; }
-.pt-search-nav:hover { color: var(--text); }
-.pt-search-nav:disabled { opacity: 0.3; cursor: default; }
-mark.pt-highlight { background: rgba(255, 200, 0, 0.3); color: inherit; border-radius: 2px; padding: 0 1px; }
-[data-theme="light"] mark.pt-highlight { background: rgba(255, 200, 0, 0.5); }
-.pt-node-dimmed { opacity: 0.5; }
+.pt-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.pt-search-input {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  color: var(--text);
+  outline: none;
+  min-width: 120px;
+}
+
+.pt-search-input:focus {
+  border-color: var(--accent);
+}
+
+.pt-search-info {
+  font-size: 0.6875rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.pt-search-nav {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 0.75rem;
+}
+
+.pt-search-nav:hover {
+  color: var(--text);
+}
+
+.pt-search-nav:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+mark.pt-highlight {
+  background: rgba(255, 200, 0, 0.3);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+[data-theme="light"] mark.pt-highlight {
+  background: rgba(255, 200, 0, 0.5);
+}
+
+.pt-node-dimmed {
+  opacity: 0.5;
+}
 
 /* ── Responsive ── */
 @media (max-width: 767px) {

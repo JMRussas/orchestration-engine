@@ -7,7 +7,7 @@
 // Depends on: ../types.ts
 // Used by:    ../index.tsx, useTreeKeyboard.ts
 
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useEffect } from 'react'
 import type { TreeNode } from '../types'
 
 /** Walk tree and collect initial expanded state based on defaultExpanded / depth */
@@ -41,6 +41,17 @@ export function useExpandState(roots: TreeNode[]): ExpandState {
   }, [roots])
 
   const [expandedMap, setExpandedMap] = useState<Map<string, boolean>>(defaultMap)
+
+  // Re-sync when tree changes: add new node defaults, remove stale entries
+  useEffect(() => {
+    setExpandedMap(prev => {
+      const next = new Map<string, boolean>()
+      for (const [id, defaultVal] of defaultMap) {
+        next.set(id, prev.get(id) ?? defaultVal)
+      }
+      return next
+    })
+  }, [defaultMap])
 
   const isExpanded = useCallback(
     (id: string) => expandedMap.get(id) ?? false,

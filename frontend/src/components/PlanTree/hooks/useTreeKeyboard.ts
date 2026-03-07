@@ -73,7 +73,7 @@ export function useTreeKeyboard(
   const focusNode = useCallback((id: string) => {
     setFocusedId(id)
     // Scroll the node into view
-    const el = document.querySelector(`[data-node-id="${id}"]`) as HTMLElement | null
+    const el = document.querySelector(`[data-node-id="${CSS.escape(id)}"]`) as HTMLElement | null
     el?.scrollIntoView({ block: 'nearest' })
   }, [])
 

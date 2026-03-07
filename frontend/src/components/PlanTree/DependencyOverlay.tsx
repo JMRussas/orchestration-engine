@@ -18,7 +18,7 @@ interface PathData {
 }
 
 export default function DependencyOverlay({ containerRef }: { containerRef: React.RefObject<HTMLDivElement | null> }) {
-  const { nodeRefs, dependencyMap, hoveredNodeId, setHoveredNodeId } = useDependencyContext()
+  const { nodeRefs, dependencyMap, downstreamMap, hoveredNodeId, setHoveredNodeId } = useDependencyContext()
   const [paths, setPaths] = useState<PathData[]>([])
   const svgRef = useRef<SVGSVGElement>(null)
   const rafRef = useRef<number>(0)
@@ -97,10 +97,8 @@ export default function DependencyOverlay({ containerRef }: { containerRef: Reac
     }
   }, [recalculate])
 
-  // Recalculate when hover changes (nodes may have expanded/collapsed)
-  useEffect(() => {
-    recalculate()
-  }, [hoveredNodeId, recalculate])
+  // Hover changes only affect path styling (opacity, stroke-width, dash),
+  // not path positions — no recalculation needed.
 
   if (paths.length === 0) return null
 
@@ -113,12 +111,11 @@ export default function DependencyOverlay({ containerRef }: { containerRef: Reac
     for (const depId of upstream) {
       highlightedFromIds.add(`${depId}->${hoveredNodeId}`)
     }
-    // Downstream: what depends on the hovered node
-    dependencyMap.forEach((deps, nodeId) => {
-      if (deps.includes(hoveredNodeId)) {
-        highlightedToIds.add(`${hoveredNodeId}->${nodeId}`)
-      }
-    })
+    // Downstream: what depends on the hovered node (pre-computed)
+    const downstream = downstreamMap.get(hoveredNodeId) ?? []
+    for (const nodeId of downstream) {
+      highlightedToIds.add(`${hoveredNodeId}->${nodeId}`)
+    }
   }
 
   const hasHighlight = hoveredNodeId != null
