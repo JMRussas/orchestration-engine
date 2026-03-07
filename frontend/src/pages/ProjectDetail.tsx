@@ -10,6 +10,7 @@ import {
 import { useSSE } from '../hooks/useSSE'
 import { useFetch } from '../hooks/useFetch'
 import type { Project, Plan, Task, Checkpoint, CoverageReport, PlanningRigor } from '../types'
+import PlanTree from '../components/PlanTree'
 
 interface ProjectData {
   project: Project
@@ -92,6 +93,8 @@ export default function ProjectDetail() {
     await action('rigor', () => updateProject(id!, { planning_rigor: newRigor }))
   }
 
+  const [expandedPlanId, setExpandedPlanId] = useState<string | null>(null)
+
   if (!id) return <div className="text-dim">Invalid URL — missing project ID.</div>
   if (error && !project) return <div className="card" style={{ borderColor: 'var(--error)' }}>Error: {error}</div>
   if (!project) return <div className="loading-spinner">Loading project...</div>
@@ -99,6 +102,9 @@ export default function ProjectDetail() {
   const latestPlan = plans[0]
   const draftPlan = plans.find(p => p.status === 'draft')
   const unresolvedCheckpoints = checkpoints.filter(c => !c.resolved_at)
+
+  // Auto-expand latest plan
+  const activePlanId = expandedPlanId ?? latestPlan?.id ?? null
 
   return (
     <>
@@ -181,85 +187,57 @@ export default function ProjectDetail() {
         )}
       </div>
 
-      {/* Plan */}
-      {latestPlan && (
+      {/* Plan History */}
+      {plans.length > 0 && (
         <div className="card mb-2">
-          <div className="flex-between">
-            <h3>Plan v{latestPlan.version} <span className={`badge ${latestPlan.status}`}>{latestPlan.status}</span></h3>
-            <span className="text-sm text-dim">
-              {latestPlan.model_used} | {latestPlan.prompt_tokens + latestPlan.completion_tokens} tokens |
-              <span className="cost"> ${latestPlan.cost_usd.toFixed(4)}</span>
-            </span>
+          <div className="flex-between mb-1">
+            <h3>Plans ({plans.length} version{plans.length !== 1 ? 's' : ''})</h3>
+            {project.status === 'draft' && (
+              <button className="btn btn-secondary btn-sm"
+                onClick={() => action('plan', () => generatePlan(id!))}
+                disabled={!!loading}>
+                {loading === 'plan' ? 'Regenerating...' : 'Regenerate'}
+              </button>
+            )}
           </div>
-          <p className="text-dim mb-1">{latestPlan.plan.summary}</p>
 
-          {/* Phases */}
-          {latestPlan.plan.phases && latestPlan.plan.phases.length > 0 && (
-            <div style={{ marginTop: '0.75rem' }}>
-              <h4 className="text-sm text-dim mb-1">Phases</h4>
-              {latestPlan.plan.phases.map((phase, i) => (
-                <div key={i} className="plan-phase-item">
-                  <span className="plan-phase-name">{phase.name}</span>
-                  <span className="text-sm text-dim"> — {phase.description}</span>
-                  <span className="text-sm text-dim"> ({phase.tasks.length} task{phase.tasks.length !== 1 ? 's' : ''})</span>
-                </div>
-              ))}
-            </div>
-          )}
+          {plans.map(plan => {
+            const isExpanded = activePlanId === plan.id
+            const isLatest = plan.id === latestPlan.id
+            const taskCount = plan.plan.phases
+              ? plan.plan.phases.reduce((sum, p) => sum + p.tasks.length, 0)
+              : (plan.plan.tasks?.length ?? 0)
 
-          {/* Open Questions */}
-          {latestPlan.plan.open_questions && latestPlan.plan.open_questions.length > 0 && (
-            <div style={{ marginTop: '0.75rem' }}>
-              <h4 className="text-sm text-dim mb-1">Open Questions</h4>
-              {latestPlan.plan.open_questions.map((q, i) => (
-                <div key={i} className="plan-question-item">
-                  <div className="text-sm" style={{ fontWeight: 600 }}>{q.question}</div>
-                  <div className="text-sm text-dim">Proposed: {q.proposed_answer}</div>
-                  <div className="text-sm text-dim">Impact: {q.impact}</div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Risk Assessment */}
-          {latestPlan.plan.risk_assessment && latestPlan.plan.risk_assessment.length > 0 && (
-            <div style={{ marginTop: '0.75rem' }}>
-              <h4 className="text-sm text-dim mb-1">Risk Assessment</h4>
-              {latestPlan.plan.risk_assessment.map((r, i) => (
-                <div key={i} className="plan-risk-item">
+            return (
+              <div key={plan.id} className={`plan-version${isLatest ? ' plan-version-latest' : ''}`}>
+                <div className="plan-version-header" onClick={() => setExpandedPlanId(isExpanded ? null : plan.id)}
+                  style={{ cursor: 'pointer' }}>
                   <div className="flex-between">
-                    <span className="text-sm" style={{ fontWeight: 600 }}>{r.risk}</span>
-                    <span>
-                      <span className={`badge risk-${r.likelihood}`}>{r.likelihood}</span>
-                      {' '}
-                      <span className={`badge risk-${r.impact}`}>{r.impact}</span>
-                    </span>
+                    <div>
+                      <span style={{ fontWeight: 600 }}>v{plan.version}</span>
+                      <span className={`badge ${plan.status}`} style={{ marginLeft: '0.5rem' }}>{plan.status}</span>
+                      {isLatest && <span className="badge running" style={{ marginLeft: '0.25rem' }}>latest</span>}
+                      <span className="text-sm text-dim" style={{ marginLeft: '0.75rem' }}>
+                        {new Date(plan.created_at * 1000).toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="text-sm text-dim">
+                      {taskCount} task{taskCount !== 1 ? 's' : ''} | {plan.model_used} |
+                      <span className="cost"> ${plan.cost_usd.toFixed(4)}</span>
+                      <span style={{ marginLeft: '0.5rem' }}>{isExpanded ? '▾' : '▸'}</span>
+                    </div>
                   </div>
-                  <div className="text-sm text-dim">Mitigation: {r.mitigation}</div>
+                  <p className="text-sm text-dim" style={{ marginTop: '0.25rem' }}>{plan.plan.summary}</p>
                 </div>
-              ))}
-            </div>
-          )}
 
-          {/* Test Strategy */}
-          {latestPlan.plan.test_strategy && (
-            <div style={{ marginTop: '0.75rem' }}>
-              <h4 className="text-sm text-dim mb-1">Test Strategy</h4>
-              <div className="text-sm">{latestPlan.plan.test_strategy.approach}</div>
-              {latestPlan.plan.test_strategy.test_tasks && latestPlan.plan.test_strategy.test_tasks.length > 0 && (
-                <ul className="text-sm text-dim" style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
-                  {latestPlan.plan.test_strategy.test_tasks.map((t, i) => (
-                    <li key={i}>{t}</li>
-                  ))}
-                </ul>
-              )}
-              {latestPlan.plan.test_strategy.coverage_notes && (
-                <div className="text-sm text-dim" style={{ marginTop: '0.25rem' }}>
-                  {latestPlan.plan.test_strategy.coverage_notes}
-                </div>
-              )}
-            </div>
-          )}
+                {isExpanded && (
+                  <div className="plan-version-body">
+                    <PlanTree plan={plan.plan} />
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
 
