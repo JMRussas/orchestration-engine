@@ -13,10 +13,16 @@ import shutil
 import sys
 from typing import Optional
 
+import traceback
+
 import httpx
 
-from fastapi import APIRouter
+from dependency_injector.wiring import inject, Provide
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+
+from backend.container import Container
+from backend.services.planner import PlannerService
 
 logger = logging.getLogger("orchestration.internal")
 
@@ -213,3 +219,24 @@ async def _chat_ollama(request: ChatRequest, full_prompt: str) -> ChatResponse:
             provider="ollama",
             model_used=ollama_model,
         )
+
+
+class PlanRequest(BaseModel):
+    project_id: str
+    provider: Optional[str] = None
+
+
+@router.post("/plan")
+@inject
+async def plan(
+    request: PlanRequest,
+    planner: PlannerService = Depends(Provide[Container.planner]),
+):
+    """Unauthenticated plan endpoint for internal use. Routes through CLI."""
+    try:
+        result = await planner.generate(request.project_id, provider=request.provider)
+        return result
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.error("Plan failed: %s\n%s", e, tb)
+        return {"error": str(e), "traceback": tb}
