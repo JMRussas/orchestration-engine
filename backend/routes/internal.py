@@ -9,6 +9,8 @@
 import asyncio
 import logging
 import os
+import shutil
+import sys
 from typing import Optional
 
 import httpx
@@ -100,6 +102,12 @@ async def chat(request: ChatRequest):
             cmd_args.extend(["-m", request.model])
             model_used = request.model
         cmd_args.extend(["-p", full_prompt])
+
+    # On Windows, npm global binaries are .cmd — resolve to full path
+    if sys.platform == "win32":
+        resolved = shutil.which(cmd_args[0])
+        if resolved:
+            cmd_args[0] = resolved
 
     try:
         proc = await asyncio.create_subprocess_exec(
