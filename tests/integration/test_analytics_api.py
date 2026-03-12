@@ -435,3 +435,141 @@ class TestEfficiency:
         assert eff["sonnet"]["verification_pass_count"] == 1  # only t6 passed
         # sonnet cost from usage_log: 0.05 + 0.06 + 0.02 = 0.13
         assert eff["sonnet"]["cost_usd"] == 0.13
+
+
+# ---------------------------------------------------------------------------
+# Usage Overview
+# ---------------------------------------------------------------------------
+
+class TestUsageOverview:
+    async def test_requires_auth(self, app_client, tmp_db):
+        resp = await app_client.get("/api/admin/analytics/usage-overview")
+        assert resp.status_code == 401
+
+    async def test_empty_db_returns_zeros(self, app_client, tmp_db):
+        client = await _get_admin_client(app_client, tmp_db)
+        resp = await client.get("/api/admin/analytics/usage-overview")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["summary"]["total_cost_usd"] == 0
+        assert data["summary"]["total_api_calls"] == 0
+        assert data["summary"]["total_tokens"] == 0
+        assert data["summary"]["active_projects"] == 0
+        assert data["by_purpose"] == []
+        assert data["by_provider"] == []
+        assert data["by_model"] == []
+
+    async def test_summary_with_data(self, app_client, tmp_db):
+        client = await _get_admin_client(app_client, tmp_db)
+        await _seed_analytics_data(tmp_db)
+
+        resp = await client.get("/api/admin/analytics/usage-overview")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        # Summary: all 5 usage_log entries (0.005 + 0.003 + 0.05 + 0.06 + 0.02 = 0.138)
+        assert data["summary"]["total_cost_usd"] == 0.138
+        assert data["summary"]["total_api_calls"] == 5
+        # Each entry: 100 prompt + 50 completion = 150 tokens, * 5 = 750
+        assert data["summary"]["total_tokens"] == 750
+        assert data["summary"]["active_projects"] == 1
+
+    async def test_by_purpose(self, app_client, tmp_db):
+        client = await _get_admin_client(app_client, tmp_db)
+        await _seed_analytics_data(tmp_db)
+
+        resp = await client.get("/api/admin/analytics/usage-overview")
+        data = resp.json()
+
+        # All seed entries have purpose="execution"
+        assert len(data["by_purpose"]) == 1
+        assert data["by_purpose"][0]["purpose"] == "execution"
+        assert data["by_purpose"][0]["api_calls"] == 5
+        assert data["by_purpose"][0]["pct_of_total"] == 100.0
+
+    async def test_by_provider(self, app_client, tmp_db):
+        client = await _get_admin_client(app_client, tmp_db)
+        await _seed_analytics_data(tmp_db)
+
+        resp = await client.get("/api/admin/analytics/usage-overview")
+        data = resp.json()
+
+        # All seed entries have provider="anthropic"
+        assert len(data["by_provider"]) == 1
+        assert data["by_provider"][0]["provider"] == "anthropic"
+        assert data["by_provider"][0]["api_calls"] == 5
+        assert data["by_provider"][0]["prompt_tokens"] == 500  # 100 * 5
+        assert data["by_provider"][0]["completion_tokens"] == 250  # 50 * 5
+
+    async def test_by_model(self, app_client, tmp_db):
+        client = await _get_admin_client(app_client, tmp_db)
+        await _seed_analytics_data(tmp_db)
+
+        resp = await client.get("/api/admin/analytics/usage-overview")
+        data = resp.json()
+
+        # All seed entries use model="claude-3-haiku"
+        assert len(data["by_model"]) == 1
+        assert data["by_model"][0]["model"] == "claude-3-haiku"
+        assert data["by_model"][0]["provider"] == "anthropic"
+        assert data["by_model"][0]["api_calls"] == 5
+
+    async def test_days_filtering(self, app_client, tmp_db):
+        client = await _get_admin_client(app_client, tmp_db)
+        now = time.time()
+
+        # usage-overview queries usage_log without task JOIN, use NULL refs to avoid FK issues
+        await tmp_db.execute_write(
+            "INSERT INTO usage_log (provider, model, "
+            "prompt_tokens, completion_tokens, cost_usd, purpose, timestamp) "
+            "VALUES ('anthropic', 'test', 100, 50, 0.01, 'planning', ?)",
+            (now - 86400,),
+        )
+        await tmp_db.execute_write(
+            "INSERT INTO usage_log (provider, model, "
+            "prompt_tokens, completion_tokens, cost_usd, purpose, timestamp) "
+            "VALUES ('ollama', 'qwen', 200, 100, 0.0, 'execution', ?)",
+            (now - 86400 * 20,),
+        )
+
+        # 7-day window: only the recent entry
+        resp = await client.get("/api/admin/analytics/usage-overview?days=7")
+        data = resp.json()
+        assert data["summary"]["total_api_calls"] == 1
+        assert data["summary"]["total_cost_usd"] == 0.01
+        assert len(data["by_provider"]) == 1
+        assert data["by_provider"][0]["provider"] == "anthropic"
+
+        # 30-day window: both entries
+        resp = await client.get("/api/admin/analytics/usage-overview?days=30")
+        data = resp.json()
+        assert data["summary"]["total_api_calls"] == 2
+        assert len(data["by_provider"]) == 2
+
+    async def test_multiple_purposes(self, app_client, tmp_db):
+        client = await _get_admin_client(app_client, tmp_db)
+        now = time.time()
+
+        for purpose, cost in [("planning", 0.05), ("execution", 0.10), ("verification", 0.02)]:
+            await tmp_db.execute_write(
+                "INSERT INTO usage_log (provider, model, "
+                "prompt_tokens, completion_tokens, cost_usd, purpose, timestamp) "
+                "VALUES ('anthropic', 'test', 100, 50, ?, ?, ?)",
+                (cost, purpose, now),
+            )
+
+        resp = await client.get("/api/admin/analytics/usage-overview")
+        data = resp.json()
+        purposes = {p["purpose"]: p for p in data["by_purpose"]}
+        assert len(purposes) == 3
+        # Sorted by cost DESC: execution (0.10), planning (0.05), verification (0.02)
+        assert data["by_purpose"][0]["purpose"] == "execution"
+        assert purposes["execution"]["pct_of_total"] == round(0.10 / 0.17 * 100, 1)
+        assert purposes["planning"]["pct_of_total"] == round(0.05 / 0.17 * 100, 1)
+
+    async def test_days_param_validation(self, app_client, tmp_db):
+        client = await _get_admin_client(app_client, tmp_db)
+        resp = await client.get("/api/admin/analytics/usage-overview?days=0")
+        assert resp.status_code == 422
+        resp = await client.get("/api/admin/analytics/usage-overview?days=91")
+        assert resp.status_code == 422
