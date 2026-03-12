@@ -43,6 +43,10 @@ export default function DependencyOverlay({ containerRef }: { containerRef: Reac
           const sRect = sourceEl.getBoundingClientRect()
           const tRect = targetEl.getBoundingClientRect()
 
+          // Skip if either node is hidden (collapsed parent → zero-size rect)
+          if (sRect.width === 0 || sRect.height === 0) continue
+          if (tRect.width === 0 || tRect.height === 0) continue
+
           // Source: right-center of source node
           const x1 = sRect.right - containerRect.left
           const y1 = sRect.top + sRect.height / 2 - containerRect.top
@@ -124,7 +128,7 @@ export default function DependencyOverlay({ containerRef }: { containerRef: Reac
     <svg
       ref={svgRef}
       className="pt-dep-overlay"
-      style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'visible' }}
+      style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}
     >
       {paths.map(p => {
         const isUpstream = highlightedFromIds.has(p.id)
