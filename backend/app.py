@@ -40,6 +40,7 @@ from backend.routes.auth_oidc import router as auth_oidc_router
 from backend.routes.checkpoints import router as checkpoints_router
 from backend.routes.events import router as events_router
 from backend.routes.external import router as external_router
+from backend.routes.internal import router as internal_router
 from backend.routes.projects import router as projects_router
 from backend.routes.rag import router as rag_router
 from backend.routes.services import health_router, router as services_router
@@ -254,6 +255,9 @@ app.include_router(admin_router, prefix="/api", dependencies=_auth_dep)
 app.include_router(analytics_router, prefix="/api", dependencies=_auth_dep)
 app.include_router(rag_router, prefix="/api", dependencies=_auth_dep)
 app.include_router(external_router, prefix="/api", dependencies=_auth_dep)
+
+# Internal routes — no auth (trusted by network isolation)
+app.include_router(internal_router, prefix="/api")
 
 # Events route uses query-param token auth (EventSource can't send headers)
 app.include_router(events_router, prefix="/api")
